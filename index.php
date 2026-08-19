@@ -74,6 +74,149 @@ function render_error(int $status, string $message): void
     exit;
 }
 
+/**
+ * Shared handling for the item-related POST actions. Items can now live
+ * directly in a place OR inside a box, so this is called from both the
+ * place page and the box page — exactly one of $boxId/$placeId is non-null.
+ * Returns true if $action was item-related (caller should stop looking at
+ * its own actions and redirect); false otherwise.
+ */
+function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId): bool
+{
+    if ($action === 'create_item') {
+        $name = trim($_POST['name'] ?? '');
+        $barcode = trim($_POST['barcode'] ?? '');
+        $quantity = max(1, (int)($_POST['quantity'] ?? 1));
+        $known = $barcode !== '' ? find_barcode($pdo, $barcode) : null;
+        if ($known) {
+            // A recognized barcode always wins — that's the whole point of scanning.
+            $name = $known['name'];
+        }
+        if ($name === '' && $barcode !== '') {
+            // Not in our own register — try a free, keyless product lookup
+            // before giving up and asking the person to type a name.
+            $suggestion = external_barcode_lookup($barcode);
+            if ($suggestion) {
+                pending_barcode_set($barcode);
+                pending_name_set($suggestion['name']);
+                flash_set(
+                    'Found "' . $suggestion['name'] . '" (via ' . $suggestion['source'] . ') for that barcode — '
+                    . 'check the name below and tap Add to save it.',
+                    'info'
+                );
+            } else {
+                pending_barcode_set($barcode);
+                flash_set('That barcode isn\'t registered yet — type an item name so thingsFinder remembers it.', 'error');
+            }
+        } elseif ($name === '') {
+            flash_set('Item name cannot be empty.', 'error');
+        } else {
+            $pdo->prepare('INSERT INTO items (box_id, place_id, name, quantity) VALUES (?, ?, ?, ?)')
+                ->execute([$boxId, $placeId, $name, $quantity]);
+            if ($barcode !== '' && !$known) {
+                remember_barcode($pdo, $barcode, $name);
+                flash_set('Item "' . $name . '" added — barcode remembered for next time.', 'success');
+            } elseif ($known) {
+                flash_set('Recognized barcode — added "' . $name . '".', 'success');
+            } else {
+                flash_set('Item "' . $name . '" added.', 'success');
+            }
+        }
+        return true;
+    }
+    if ($action === 'rename_item') {
+        $id = (int)($_POST['id'] ?? 0);
+        $name = trim($_POST['name'] ?? '');
+        $quantity = max(1, (int)($_POST['quantity'] ?? 1));
+        if ($id && $name !== '') {
+            $pdo->prepare('UPDATE items SET name = ?, quantity = ? WHERE id = ?')->execute([$name, $quantity, $id]);
+            flash_set('Item updated.', 'success');
+        }
+        return true;
+    }
+    if ($action === 'delete_item') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id) {
+            $pdo->prepare('DELETE FROM items WHERE id = ?')->execute([$id]);
+            flash_set('Item deleted.', 'success');
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Renders the "Items" section (card list + add-item tile with barcode
+ * scanning) shared by the box page and the place page.
+ */
+function render_items_section(array $items, string $pendingBarcode, string $pendingName): string
+{
+    ob_start();
+    ?>
+    <h2>Items</h2>
+    <?php if (!$items): ?>
+      <div class="empty-state">
+        <?= icon('box', 28) ?>
+        <p>No items here yet.</p>
+      </div>
+    <?php endif; ?>
+    <ul class="card-list">
+      <?php foreach ($items as $it): ?>
+        <li class="card">
+          <div class="card-head">
+            <div class="card-body">
+              <span class="card-title"><?= h($it['name']) ?></span>
+              <?php if ((int)$it['quantity'] > 1): ?><span class="qty-badge">×<?= (int)$it['quantity'] ?></span><?php endif; ?>
+            </div>
+            <details class="card-menu">
+              <summary aria-label="Manage item"><?= icon('dots', 16) ?></summary>
+              <div class="card-menu-body">
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="action" value="rename_item">
+                  <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+                  <input type="text" name="name" value="<?= h($it['name']) ?>" required>
+                  <input type="number" name="quantity" value="<?= (int)$it['quantity'] ?>" min="1" class="qty-input" aria-label="Quantity">
+                  <button type="submit" class="secondary"><?= icon('edit', 14) ?>Save</button>
+                </form>
+                <form method="post" class="inline-form" onsubmit="return confirm('Delete this item?');">
+                  <input type="hidden" name="action" value="delete_item">
+                  <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+                  <button type="submit" class="danger"><?= icon('trash', 14) ?>Delete</button>
+                </form>
+              </div>
+            </details>
+          </div>
+        </li>
+      <?php endforeach; ?>
+      <li class="card add-card">
+        <details<?= ($pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
+          <summary><?= icon('plus', 15) ?>Add an item</summary>
+          <form method="post" class="add-item-form">
+            <input type="hidden" name="action" value="create_item">
+            <div class="barcode-row">
+              <input type="text" name="barcode" value="<?= h($pendingBarcode) ?>" placeholder="Barcode — scan or type" autocomplete="off" inputmode="numeric">
+              <button type="button" class="secondary scan-btn" hidden><?= icon('camera', 14) ?>Scan</button>
+            </div>
+            <p class="scan-support-note meta" hidden></p>
+            <p class="scan-hint meta" hidden></p>
+            <div class="name-qty-row">
+              <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun" class="name-input">
+              <input type="number" name="quantity" value="1" min="1" class="qty-input" title="Quantity" aria-label="Quantity">
+            </div>
+            <button type="submit">Add</button>
+          </form>
+          <div class="scanner-overlay" hidden>
+            <video playsinline muted></video>
+            <button type="button" class="btn btn-ghost scan-cancel">Cancel</button>
+          </div>
+        </details>
+      </li>
+    </ul>
+    <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
+    <?php
+    return ob_get_clean();
+}
+
 // -------------------------------------------------------------------------
 // Route: home
 // -------------------------------------------------------------------------
@@ -110,7 +253,8 @@ if ($segments === []) {
     $places = $pdo->query(
         "SELECT places.*,
                 (SELECT COUNT(*) FROM boxes WHERE boxes.place_id = places.id) AS box_count,
-                (SELECT COUNT(*) FROM items JOIN boxes ON boxes.id = items.box_id WHERE boxes.place_id = places.id) AS item_count
+                (SELECT COUNT(*) FROM items JOIN boxes ON boxes.id = items.box_id WHERE boxes.place_id = places.id)
+                    + (SELECT COUNT(*) FROM items WHERE items.place_id = places.id) AS item_count
          FROM places ORDER BY name COLLATE NOCASE"
     )->fetchAll();
 
@@ -177,11 +321,12 @@ if ($segments === ['search']) {
     if ($q !== '') {
         $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
         $stmt = $pdo->prepare(
-            "SELECT items.id, items.name AS item_name, boxes.name AS box_name, boxes.slug AS box_slug,
+            "SELECT items.id, items.name AS item_name, items.quantity,
+                    boxes.name AS box_name, boxes.slug AS box_slug,
                     places.name AS place_name, places.slug AS place_slug
              FROM items
-             JOIN boxes ON boxes.id = items.box_id
-             JOIN places ON places.id = boxes.place_id
+             LEFT JOIN boxes ON boxes.id = items.box_id
+             JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
              WHERE items.name LIKE ? ESCAPE '\\'
              ORDER BY items.name COLLATE NOCASE"
         );
@@ -215,11 +360,13 @@ if ($segments === ['search']) {
         <?php foreach ($results as $r): ?>
           <li class="card">
             <div class="card-body">
-              <span class="card-title"><?= h($r['item_name']) ?></span>
+              <span class="card-title"><?= h($r['item_name']) ?><?php if ((int)$r['quantity'] > 1): ?> <span class="qty-badge">×<?= (int)$r['quantity'] ?></span><?php endif; ?></span>
               <span class="meta">in
                 <a href="/place/<?= h($r['place_slug']) ?>"><?= h($r['place_name']) ?></a>
-                <?= icon('chevron', 12) ?>
-                <a href="/place/<?= h($r['place_slug']) ?>/<?= h($r['box_slug']) ?>"><?= h($r['box_name']) ?></a>
+                <?php if ($r['box_name'] !== null): ?>
+                  <?= icon('chevron', 12) ?>
+                  <a href="/place/<?= h($r['place_slug']) ?>/<?= h($r['box_slug']) ?>"><?= h($r['box_name']) ?></a>
+                <?php endif; ?>
               </span>
             </div>
           </li>
@@ -263,6 +410,32 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     }
 
     // ---------------------------------------------------------------
+    // Route: /place/{placeSlug}/{boxSlug}/label.svg | label.png
+    //   A printable label: QR code + box name + place name + border +
+    //   icons, sized for a label printer. Query params (all optional):
+    //     ?w=50&h=30     label size in millimeters (default 50x30)
+    //     ?dpi=300       PNG resolution only (default 300)
+    // ---------------------------------------------------------------
+    if (count($segments) === 4 && in_array($segments[3], ['label.svg', 'label.png'], true)) {
+        $boxSlug = $segments[2];
+        $box = find_box_by_slug($pdo, $placeId, $boxSlug);
+        if (!$box) {
+            render_error(404, 'No box "' . $boxSlug . '" found in "' . $place['name'] . '".');
+        }
+        require_once __DIR__ . '/includes/label.php';
+        $contentsUrl = base_url() . '/api/boxes/' . (int)$box['id'] . '/contents';
+        $widthMm = isset($_GET['w']) ? (float)$_GET['w'] : 50.0;
+        $heightMm = isset($_GET['h']) ? (float)$_GET['h'] : 30.0;
+        $dpi = isset($_GET['dpi']) ? (int)$_GET['dpi'] : 300;
+        if ($segments[3] === 'label.png') {
+            label_send_png($contentsUrl, $box['name'], $place['name'], $widthMm, $heightMm, $dpi);
+        } else {
+            label_send_svg($contentsUrl, $box['name'], $place['name'], $widthMm, $heightMm);
+        }
+        exit;
+    }
+
+    // ---------------------------------------------------------------
     // Route: /place/{placeSlug}/{boxSlug}
     // ---------------------------------------------------------------
     if (count($segments) === 3) {
@@ -276,56 +449,8 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
 
         if ($method === 'POST') {
             $action = $_POST['action'] ?? '';
-            if ($action === 'create_item') {
-                $name = trim($_POST['name'] ?? '');
-                $barcode = trim($_POST['barcode'] ?? '');
-                $known = $barcode !== '' ? find_barcode($pdo, $barcode) : null;
-                if ($known) {
-                    // A recognized barcode always wins — that's the whole point of scanning.
-                    $name = $known['name'];
-                }
-                if ($name === '' && $barcode !== '') {
-                    // Not in our own register — try a free, keyless product lookup
-                    // before giving up and asking the person to type a name.
-                    $suggestion = external_barcode_lookup($barcode);
-                    if ($suggestion) {
-                        pending_barcode_set($barcode);
-                        pending_name_set($suggestion['name']);
-                        flash_set(
-                            'Found "' . $suggestion['name'] . '" (via ' . $suggestion['source'] . ') for that barcode — '
-                            . 'check the name below and tap Add to save it.',
-                            'info'
-                        );
-                    } else {
-                        pending_barcode_set($barcode);
-                        flash_set('That barcode isn\'t registered yet — type an item name so thingsFinder remembers it.', 'error');
-                    }
-                } elseif ($name === '') {
-                    flash_set('Item name cannot be empty.', 'error');
-                } else {
-                    $pdo->prepare('INSERT INTO items (box_id, name) VALUES (?, ?)')->execute([$boxId, $name]);
-                    if ($barcode !== '' && !$known) {
-                        remember_barcode($pdo, $barcode, $name);
-                        flash_set('Item "' . $name . '" added — barcode remembered for next time.', 'success');
-                    } elseif ($known) {
-                        flash_set('Recognized barcode — added "' . $name . '".', 'success');
-                    } else {
-                        flash_set('Item "' . $name . '" added.', 'success');
-                    }
-                }
-            } elseif ($action === 'rename_item') {
-                $id = (int)($_POST['id'] ?? 0);
-                $name = trim($_POST['name'] ?? '');
-                if ($id && $name !== '') {
-                    $pdo->prepare('UPDATE items SET name = ? WHERE id = ?')->execute([$name, $id]);
-                    flash_set('Item renamed.', 'success');
-                }
-            } elseif ($action === 'delete_item') {
-                $id = (int)($_POST['id'] ?? 0);
-                if ($id) {
-                    $pdo->prepare('DELETE FROM items WHERE id = ?')->execute([$id]);
-                    flash_set('Item deleted.', 'success');
-                }
+            if (handle_item_action($pdo, $action, $boxId, null)) {
+                // handled — falls through to the redirect below
             } elseif ($action === 'rename_box') {
                 $name = trim($_POST['name'] ?? '');
                 if ($name !== '') {
@@ -384,61 +509,21 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
           </div>
         </div>
 
-        <h2>Items</h2>
-        <?php if (!$items): ?>
-          <div class="empty-state">
-            <?= icon('box', 28) ?>
-            <p>No items in this box yet.</p>
+        <h2>Printable label</h2>
+        <div class="label-block">
+          <div class="label-preview">
+            <img src="/place/<?= h($placeSlug) ?>/<?= h($box['slug']) ?>/label.svg" alt="Printable label for <?= h($box['name']) ?>" width="300" height="180">
           </div>
-        <?php endif; ?>
-        <ul class="card-list">
-          <?php foreach ($items as $it): ?>
-            <li class="card">
-              <div class="card-head">
-                <div class="card-body">
-                  <span class="card-title"><?= h($it['name']) ?></span>
-                </div>
-                <details class="card-menu">
-                  <summary aria-label="Manage item"><?= icon('dots', 16) ?></summary>
-                  <div class="card-menu-body">
-                    <form method="post" class="inline-form">
-                      <input type="hidden" name="action" value="rename_item">
-                      <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
-                      <input type="text" name="name" value="<?= h($it['name']) ?>" required>
-                      <button type="submit" class="secondary"><?= icon('edit', 14) ?>Rename</button>
-                    </form>
-                    <form method="post" class="inline-form" onsubmit="return confirm('Delete this item?');">
-                      <input type="hidden" name="action" value="delete_item">
-                      <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
-                      <button type="submit" class="danger"><?= icon('trash', 14) ?>Delete</button>
-                    </form>
-                  </div>
-                </details>
-              </div>
-            </li>
-          <?php endforeach; ?>
-          <li class="card add-card">
-            <details<?= ($pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
-              <summary><?= icon('plus', 15) ?>Add an item</summary>
-              <form method="post" class="add-item-form">
-                <input type="hidden" name="action" value="create_item">
-                <div class="barcode-row">
-                  <input type="text" name="barcode" value="<?= h($pendingBarcode) ?>" placeholder="Barcode — scan or type" autocomplete="off" inputmode="numeric">
-                  <button type="button" class="secondary scan-btn" hidden><?= icon('camera', 14) ?>Scan</button>
-                </div>
-                <p class="scan-support-note meta" hidden></p>
-                <p class="scan-hint meta" hidden></p>
-                <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun">
-                <button type="submit">Add</button>
-              </form>
-              <div class="scanner-overlay" hidden>
-                <video playsinline muted></video>
-                <button type="button" class="btn btn-ghost scan-cancel">Cancel</button>
-              </div>
-            </details>
-          </li>
-        </ul>
-        <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
+          <div class="label-info">
+            <p class="meta">A ready-to-print label: QR code, box name, place name, a border, and a couple of icons. Default size is 50×30mm — add <code>?w=</code>/<code>?h=</code> (millimeters) to the link for a different label size, or <code>?dpi=</code> for the PNG's resolution.</p>
+            <div class="row-actions">
+              <a class="btn secondary" href="/place/<?= h($placeSlug) ?>/<?= h($box['slug']) ?>/label.svg" download><?= icon('download', 14) ?>SVG</a>
+              <a class="btn secondary" href="/place/<?= h($placeSlug) ?>/<?= h($box['slug']) ?>/label.png" download><?= icon('download', 14) ?>PNG</a>
+            </div>
+          </div>
+        </div>
+
+        <?= render_items_section($items, $pendingBarcode, $pendingName) ?>
         <?php
         layout($box['name'], ob_get_clean(), [$place['name'] => '/place/' . $placeSlug, $box['name'] => null]);
         exit;
@@ -449,7 +534,9 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     // ---------------------------------------------------------------
     if ($method === 'POST') {
         $action = $_POST['action'] ?? '';
-        if ($action === 'create_box') {
+        if (handle_item_action($pdo, $action, null, $placeId)) {
+            // handled — falls through to the redirect below
+        } elseif ($action === 'create_box') {
             $name = trim($_POST['name'] ?? '');
             if ($name !== '') {
                 $slug = unique_box_slug($pdo, $placeId, $name);
@@ -492,6 +579,12 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     );
     $stmt->execute([$placeId]);
     $boxes = $stmt->fetchAll();
+
+    $stmt = $pdo->prepare('SELECT * FROM items WHERE place_id = ? ORDER BY name COLLATE NOCASE');
+    $stmt->execute([$placeId]);
+    $placeItems = $stmt->fetchAll();
+    $pendingBarcode = pending_barcode_take();
+    $pendingName = pending_name_take();
 
     ob_start();
     ?>
@@ -558,6 +651,9 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         </details>
       </li>
     </ul>
+
+    <p class="section-note">Items below are loose in <?= h($place['name']) ?> itself, not inside any box.</p>
+    <?= render_items_section($placeItems, $pendingBarcode, $pendingName) ?>
     <?php
     layout($place['name'], ob_get_clean(), [$place['name'] => null]);
     exit;

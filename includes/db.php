@@ -45,12 +45,22 @@ function init_schema(PDO $pdo): void
         UNIQUE(place_id, slug)
     )");
 
+    // Items can live directly in a place, or inside a box within a place —
+    // exactly one of box_id/place_id is set (enforced by the CHECK below).
+    // New databases get this shape immediately; a database created before
+    // quantity/place-items existed is upgraded in place by
+    // migrate_items_table_if_needed(), since SQLite can't ALTER a column's
+    // NOT NULL-ness or add a CHECK constraint after the fact.
     $pdo->exec("CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        box_id INTEGER NOT NULL REFERENCES boxes(id) ON DELETE CASCADE,
+        box_id INTEGER REFERENCES boxes(id) ON DELETE CASCADE,
+        place_id INTEGER REFERENCES places(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        quantity INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((box_id IS NULL) <> (place_id IS NULL))
     )");
+    migrate_items_table_if_needed($pdo);
 
     // The barcode → item register: scanning a barcode while adding an item
     // either resolves to a name already known here, or (once the user types
@@ -64,7 +74,46 @@ function init_schema(PDO $pdo): void
 
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_boxes_place ON boxes(place_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_box ON items(box_id)");
+    $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_place ON items(place_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name)");
+}
+
+/**
+ * Upgrades an existing `items` table created before place-level items and
+ * quantity existed (box_id NOT NULL, no place_id/quantity columns) to the
+ * current shape, preserving every row. No-op on a database that already has
+ * the current shape (the common case — this runs on every request).
+ */
+function migrate_items_table_if_needed(PDO $pdo): void
+{
+    $cols = array_column($pdo->query('PRAGMA table_info(items)')->fetchAll(), 'name');
+
+    if (!in_array('place_id', $cols, true)) {
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec('ALTER TABLE items RENAME TO items_old_migration');
+            $pdo->exec("CREATE TABLE items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                box_id INTEGER REFERENCES boxes(id) ON DELETE CASCADE,
+                place_id INTEGER REFERENCES places(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                CHECK ((box_id IS NULL) <> (place_id IS NULL))
+            )");
+            $oldCols = array_column($pdo->query('PRAGMA table_info(items_old_migration)')->fetchAll(), 'name');
+            $qtySelect = in_array('quantity', $oldCols, true) ? 'quantity' : '1';
+            $pdo->exec("INSERT INTO items (id, box_id, place_id, name, quantity, created_at)
+                        SELECT id, box_id, NULL, name, $qtySelect, created_at FROM items_old_migration");
+            $pdo->exec('DROP TABLE items_old_migration');
+            $pdo->commit();
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    } elseif (!in_array('quantity', $cols, true)) {
+        $pdo->exec('ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
+    }
 }
 
 /** Looks up a registered barcode → item association, if any. */

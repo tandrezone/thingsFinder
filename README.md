@@ -31,13 +31,19 @@ built-in server and is ignored by Apache.
 ## Using the UI
 
 - **Home (`/`)** — list of places, add new ones.
-- **`/place/{place}`** — boxes inside that place, add/rename/delete boxes.
+- **`/place/{place}`** — boxes inside that place, *and* any items placed
+  directly in it (not every item needs a box — a rake or a mop can just live
+  in "Garage" with no box in between); add/rename/delete boxes and place-level
+  items.
 - **`/place/{place}/{box}`** — items inside that box, add/rename/delete items,
-  plus a QR code for the box (see below).
+  plus a QR code and a printable label for the box (see below).
 - **`/search?q=...`** — search every item by name, with a link straight to its
-  place + box.
+  place (and box, if it's in one).
 
-Every rename/delete is a plain HTML form (no JavaScript required).
+Every rename/delete is a plain HTML form (no JavaScript required). Items also
+have a **quantity** (defaults to 1) — set it when adding an item, or change it
+later from the item's menu; anything more than 1 shows as a small "×N" badge
+on the item.
 
 ## Barcodes
 
@@ -117,6 +123,32 @@ label and see what's inside without touching the UI.
   and no GD extension required for the SVG version. PNG downloads use GD if
   it's available on your server (it usually is).
 
+## Printable labels
+
+Every box page also has a "Printable label" block: a small tag-style image
+sized for a label printer (Dymo, Brother, NIIMBOT, or similar), with the
+box's QR code, its name, its place's name, filled box/location-pin icons on
+light accent "chips", a double-line frame in the app's own accent color, a
+dashed divider between the QR and the text, and a decorative corner hole —
+so it reads like it belongs with the rest of the app, not just a bare QR
+code with text next to it.
+
+- `/place/{place}/{box}/label.svg` — vector; scales perfectly to any size and
+  is what most label-printer apps and browsers can print directly.
+- `/place/{place}/{box}/label.png` — rasterized (needs GD, same as the QR
+  PNG). Text is drawn with the vendored Liberation Sans font
+  (`assets/fonts/`, SIL Open Font License — see `assets/fonts/LICENSE-OFL.txt`)
+  when GD has FreeType support, so it stays crisp regardless of what fonts
+  happen to be installed on your server; it falls back to GD's plain bitmap
+  font if FreeType isn't available, so PNG export never hard-fails.
+- Both accept query params to change the size: `?w=` and `?h=` in
+  millimeters (default 50×30), and `?dpi=` for the PNG's resolution (default
+  300). For example, `/place/garage/tools-bin/label.png?w=70&h=40&dpi=203`.
+- Long box or place names shrink to fit first, and only truncate (with an
+  ellipsis) if they still don't fit — which mostly happens on the smallest
+  label sizes. If you have long names, use a bigger `?w=`/`?h=`, or keep box
+  names short and let the QR code carry the rest of the detail.
+
 ## JSON API
 
 Everything under `/api` returns JSON.
@@ -130,14 +162,16 @@ Everything under `/api` returns JSON.
 | DELETE | `/api/places/{id}` | | Delete a place (and its boxes/items) |
 | GET | `/api/places/{id}/boxes` | | List boxes in a place |
 | POST | `/api/places/{id}/boxes` | `{"name": "Bin 2"}` | Create a box |
+| GET | `/api/places/{id}/items` | | List items placed directly in a place (not in a box) |
+| POST | `/api/places/{id}/items` | `{"name": "Rake", "quantity": 1}` | Create an item directly in a place |
 | GET | `/api/boxes/{id}` | | Get one box |
 | PUT | `/api/boxes/{id}` | `{"name": "..."}` | Rename a box |
 | DELETE | `/api/boxes/{id}` | | Delete a box (and its items) |
 | GET | `/api/boxes/{id}/items` | | List items in a box |
-| POST | `/api/boxes/{id}/items` | `{"name": "Glue gun"}` | Create an item |
+| POST | `/api/boxes/{id}/items` | `{"name": "Glue gun", "quantity": 1}` | Create an item in a box (`quantity` optional, defaults to 1) |
 | GET | `/api/boxes/{id}/contents` | | Box + place + all its items — what the box's QR code links to |
 | GET | `/api/items/{id}` | | Get one item |
-| PUT | `/api/items/{id}` | `{"name": "..."}` | Rename an item |
+| PUT | `/api/items/{id}` | `{"name": "...", "quantity": 2}` | Rename an item and/or update its quantity |
 | DELETE | `/api/items/{id}` | | Delete an item |
 | GET | `/api/search?q=glue` | | Search items by name; each result includes its place + box + URL |
 | GET | `/api/barcodes` | | List every registered barcode -> item association |
@@ -158,14 +192,21 @@ curl "localhost:8000/api/search?q=glue"
 
 ```
 places        (id, name, slug)
-boxes         (id, place_id, name, slug)   -- slug unique within its place
-items         (id, box_id, name)
-barcode_items (barcode, name)              -- barcode is the primary key
+boxes         (id, place_id, name, slug)             -- slug unique within its place
+items         (id, box_id, place_id, name, quantity) -- exactly one of box_id/place_id is set
+barcode_items (barcode, name)                        -- barcode is the primary key
 ```
 
-Deleting a place deletes its boxes and their items (SQLite `ON DELETE
-CASCADE`). Slugs are auto-generated from the name and de-duplicated (`bin-2`,
-`bin-2-2`, …) so URLs are always stable and unique.
+An item lives either in a box or directly in a place — never both, never
+neither (enforced by a `CHECK` constraint). If you upgrade from an older
+copy of thingsFinder, the database is migrated in place the first time it
+runs: existing items keep their box, gain a `quantity` of 1, and nothing is
+lost.
+
+Deleting a place deletes its boxes and everything in them, plus any items
+placed directly in it; deleting a box deletes its items (all via SQLite
+`ON DELETE CASCADE`). Slugs are auto-generated from the name and
+de-duplicated (`bin-2`, `bin-2-2`, …) so URLs are always stable and unique.
 
 ## Project structure
 
@@ -178,8 +219,10 @@ thingsfinder/
   includes/helpers.php   # JSON/HTML/routing helpers
   includes/qrcode.php    # thin wrapper: URL -> inline SVG / downloadable SVG/PNG
   includes/qrcode-lib.php # vendored MIT QR encoder (no deps, no GD required)
+  includes/label.php     # printable label generator (QR + names + border + icons, SVG/PNG)
   assets/style.css     # UI styling
   assets/scan.js       # optional camera barcode scanning (progressive enhancement)
+  assets/fonts/        # vendored Liberation Sans TTF, used by the PNG label (SIL OFL license)
   data/database.sqlite # created automatically, gitignored
   .htaccess            # Apache routing (alternative to router.php)
 ```
@@ -189,5 +232,5 @@ thingsfinder/
 - No authentication — anyone who can reach the app can view/edit everything.
   Fine for a home network; put it behind a VPN or add basic auth if exposing
   it publicly.
-- Items currently only have a name. Quantity, notes, or a photo per item
-  would be easy additions to the `items` table and the corresponding forms.
+- Items have a name and a quantity. Notes or a photo per item would be easy
+  further additions to the `items` table and the corresponding forms.

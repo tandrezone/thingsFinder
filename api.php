@@ -69,7 +69,13 @@ function box_out(array $b, ?array $place = null): array
 
 function item_out(array $i): array
 {
-    return ['id' => (int)$i['id'], 'box_id' => (int)$i['box_id'], 'name' => $i['name']];
+    return [
+        'id' => (int)$i['id'],
+        'box_id' => $i['box_id'] !== null ? (int)$i['box_id'] : null,
+        'place_id' => $i['place_id'] !== null ? (int)$i['place_id'] : null,
+        'name' => $i['name'],
+        'quantity' => (int)($i['quantity'] ?? 1),
+    ];
 }
 
 function barcode_out(array $b): array
@@ -88,11 +94,12 @@ try {
             json_response(['query' => $q, 'results' => []]);
         }
         $stmt = $pdo->prepare(
-            "SELECT items.id, items.name AS item_name, boxes.id AS box_id, boxes.name AS box_name,
-                    boxes.slug AS box_slug, places.id AS place_id, places.name AS place_name, places.slug AS place_slug
+            "SELECT items.id, items.name AS item_name, items.quantity,
+                    boxes.id AS box_id, boxes.name AS box_name, boxes.slug AS box_slug,
+                    places.id AS place_id, places.name AS place_name, places.slug AS place_slug
              FROM items
-             JOIN boxes ON boxes.id = items.box_id
-             JOIN places ON places.id = boxes.place_id
+             LEFT JOIN boxes ON boxes.id = items.box_id
+             JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
              WHERE items.name LIKE ? ESCAPE '\\'
              ORDER BY items.name COLLATE NOCASE"
         );
@@ -100,11 +107,14 @@ try {
         $stmt->execute([$like]);
         $results = [];
         foreach ($stmt->fetchAll() as $row) {
+            $box = $row['box_id'] !== null
+                ? ['id' => (int)$row['box_id'], 'name' => $row['box_name'], 'slug' => $row['box_slug']]
+                : null;
             $results[] = [
-                'item' => ['id' => (int)$row['id'], 'name' => $row['item_name']],
-                'box' => ['id' => (int)$row['box_id'], 'name' => $row['box_name'], 'slug' => $row['box_slug']],
+                'item' => ['id' => (int)$row['id'], 'name' => $row['item_name'], 'quantity' => (int)$row['quantity']],
+                'box' => $box,
                 'place' => ['id' => (int)$row['place_id'], 'name' => $row['place_name'], 'slug' => $row['place_slug']],
-                'url' => '/place/' . $row['place_slug'] . '/' . $row['box_slug'],
+                'url' => '/place/' . $row['place_slug'] . ($box ? '/' . $row['box_slug'] : ''),
             ];
         }
         json_response(['query' => $q, 'results' => $results]);
@@ -160,6 +170,31 @@ try {
                 $id = (int)$pdo->lastInsertId();
                 $row = $pdo->query("SELECT * FROM boxes WHERE id = $id")->fetch();
                 json_response(['box' => box_out($row, $place)], 201);
+            }
+            json_error('Method not allowed', 405);
+        }
+
+        // /api/places/{id}/items — items directly in a place (not in a box).
+        if (count($segments) === 3 && $segments[2] === 'items') {
+            if (!$place) {
+                json_error('Place not found', 404);
+            }
+            if ($method === 'GET') {
+                $stmt = $pdo->prepare('SELECT * FROM items WHERE place_id = ? ORDER BY name COLLATE NOCASE');
+                $stmt->execute([$placeId]);
+                json_response(['items' => array_map('item_out', $stmt->fetchAll())]);
+            }
+            if ($method === 'POST') {
+                $body = read_body();
+                $name = trim($body['name'] ?? '');
+                if ($name === '') {
+                    json_error('name is required');
+                }
+                $quantity = max(1, (int)($body['quantity'] ?? 1));
+                $pdo->prepare('INSERT INTO items (place_id, name, quantity) VALUES (?, ?, ?)')->execute([$placeId, $name, $quantity]);
+                $id = (int)$pdo->lastInsertId();
+                $row = $pdo->query("SELECT * FROM items WHERE id = $id")->fetch();
+                json_response(['item' => item_out($row)], 201);
             }
             json_error('Method not allowed', 405);
         }
@@ -236,7 +271,8 @@ try {
                 if ($name === '') {
                     json_error('name is required');
                 }
-                $pdo->prepare('INSERT INTO items (box_id, name) VALUES (?, ?)')->execute([$boxId, $name]);
+                $quantity = max(1, (int)($body['quantity'] ?? 1));
+                $pdo->prepare('INSERT INTO items (box_id, name, quantity) VALUES (?, ?, ?)')->execute([$boxId, $name, $quantity]);
                 $id = (int)$pdo->lastInsertId();
                 $row = $pdo->query("SELECT * FROM items WHERE id = $id")->fetch();
                 json_response(['item' => item_out($row)], 201);
@@ -289,7 +325,8 @@ try {
             if ($name === '') {
                 json_error('name is required');
             }
-            $pdo->prepare('UPDATE items SET name = ? WHERE id = ?')->execute([$name, $itemId]);
+            $quantity = isset($body['quantity']) ? max(1, (int)$body['quantity']) : (int)$item['quantity'];
+            $pdo->prepare('UPDATE items SET name = ?, quantity = ? WHERE id = ?')->execute([$name, $quantity, $itemId]);
             $row = $pdo->query("SELECT * FROM items WHERE id = $itemId")->fetch();
             json_response(['item' => item_out($row)]);
         }
