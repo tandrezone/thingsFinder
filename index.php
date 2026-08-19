@@ -284,13 +284,24 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                     // A recognized barcode always wins — that's the whole point of scanning.
                     $name = $known['name'];
                 }
-                if ($name === '') {
-                    if ($barcode !== '') {
+                if ($name === '' && $barcode !== '') {
+                    // Not in our own register — try a free, keyless product lookup
+                    // before giving up and asking the person to type a name.
+                    $suggestion = external_barcode_lookup($barcode);
+                    if ($suggestion) {
+                        pending_barcode_set($barcode);
+                        pending_name_set($suggestion['name']);
+                        flash_set(
+                            'Found "' . $suggestion['name'] . '" (via ' . $suggestion['source'] . ') for that barcode — '
+                            . 'check the name below and tap Add to save it.',
+                            'info'
+                        );
+                    } else {
                         pending_barcode_set($barcode);
                         flash_set('That barcode isn\'t registered yet — type an item name so thingsFinder remembers it.', 'error');
-                    } else {
-                        flash_set('Item name cannot be empty.', 'error');
                     }
+                } elseif ($name === '') {
+                    flash_set('Item name cannot be empty.', 'error');
                 } else {
                     $pdo->prepare('INSERT INTO items (box_id, name) VALUES (?, ?)')->execute([$boxId, $name]);
                     if ($barcode !== '' && !$known) {
@@ -335,6 +346,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         $stmt->execute([$boxId]);
         $items = $stmt->fetchAll();
         $pendingBarcode = pending_barcode_take();
+        $pendingName = pending_name_take();
 
         ob_start();
         ?>
@@ -406,7 +418,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             </li>
           <?php endforeach; ?>
           <li class="card add-card">
-            <details<?= $pendingBarcode !== '' ? ' open' : '' ?>>
+            <details<?= ($pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
               <summary><?= icon('plus', 15) ?>Add an item</summary>
               <form method="post" class="add-item-form">
                 <input type="hidden" name="action" value="create_item">
@@ -415,7 +427,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                   <button type="button" class="secondary scan-btn" hidden><?= icon('camera', 14) ?>Scan</button>
                 </div>
                 <p class="scan-hint meta" hidden></p>
-                <input type="text" name="name" placeholder="e.g. Hot glue gun">
+                <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun">
                 <button type="submit">Add</button>
               </form>
               <div class="scanner-overlay" hidden>
@@ -425,7 +437,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             </details>
           </li>
         </ul>
-        <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or asks you to name it once so it knows next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
+        <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
         <?php
         layout($box['name'], ob_get_clean(), [$place['name'] => '/place/' . $placeSlug, $box['name'] => null]);
         exit;

@@ -34,6 +34,10 @@
  *   PUT    /api/barcodes/{code}            { name }
  *   DELETE /api/barcodes/{code}
  *
+ * External product-name lookup (best-effort suggestion for a barcode we
+ * don't have registered ourselves yet — never writes to our own register):
+ *   GET    /api/lookup/{code}              { barcode, name, source } — name/source are null if not found
+ *
  * Search:
  *   GET    /api/search?q=glue
  */
@@ -294,6 +298,20 @@ try {
             json_response(['deleted' => true]);
         }
         json_error('Method not allowed', 405);
+    }
+
+    // ---- /api/lookup/{code} --------------------------------------------
+    if (($segments[0] ?? null) === 'lookup' && count($segments) === 2) {
+        if ($method !== 'GET') {
+            json_error('Method not allowed', 405);
+        }
+        $code = (string)$segments[1];
+        $found = external_barcode_lookup($code);
+        json_response([
+            'barcode' => $code,
+            'name' => $found['name'] ?? null,
+            'source' => $found['source'] ?? null,
+        ]);
     }
 
     // ---- /api/barcodes[/...] -------------------------------------------

@@ -46,9 +46,21 @@ barcode there:
 
 - If that barcode is already registered, thingsFinder adds the item it's
   linked to — you don't need to type a name at all.
-- If it's not registered yet, type a name and thingsFinder adds the item
-  *and* remembers the barcode, so scanning it again anywhere will resolve
-  straight to that name.
+- If it's not registered yet, thingsFinder tries a couple of free, keyless
+  product-lookup APIs (Open Food Facts, then UPCitemdb's trial endpoint) to
+  suggest a name. The suggestion (if any) is filled into the name field for
+  you to confirm or edit — nothing is saved until you tap **Add**. Once you
+  do, thingsFinder adds the item *and* remembers the barcode, so scanning it
+  again anywhere will resolve straight to that name.
+- If no suggestion is found either, you just type the name yourself — same
+  as before.
+
+**Privacy note:** looking up an unregistered barcode sends that barcode
+number to Open Food Facts and/or UPCitemdb over the network — nothing else
+about your inventory. If you'd rather thingsFinder never make outbound
+requests, set `EXTERNAL_BARCODE_LOOKUP_ENABLED` to `false` in
+`includes/helpers.php`; barcode scanning still works, it'll just always ask
+you to type the name for anything not already in your own register.
 
 On a phone with a modern browser (Chrome/Edge on Android; camera-based
 scanning isn't yet supported by Safari on iOS), a "Scan" button appears next
@@ -105,6 +117,7 @@ Everything under `/api` returns JSON.
 | GET | `/api/barcodes/{code}` | | Look up one barcode; 404 if not registered |
 | PUT | `/api/barcodes/{code}` | `{"name": "..."}` | Rename the item a barcode resolves to |
 | DELETE | `/api/barcodes/{code}` | | Remove a barcode association |
+| GET | `/api/lookup/{code}` | | Best-effort external name suggestion for a barcode; `{"barcode","name","source"}`, name/source null if nothing found. Never touches the register itself. |
 
 Example:
 

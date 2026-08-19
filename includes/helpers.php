@@ -146,3 +146,127 @@ function pending_barcode_take(): string
     }
     return '';
 }
+
+/** Same idea as pending_barcode_*, for a name suggested by the external lookup below. */
+function pending_name_set(string $name): void
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+    $_SESSION['pending_name'] = $name;
+}
+
+function pending_name_take(): string
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+    if (!empty($_SESSION['pending_name'])) {
+        $name = $_SESSION['pending_name'];
+        unset($_SESSION['pending_name']);
+        return $name;
+    }
+    return '';
+}
+
+/**
+ * Set to false to disable external barcode lookups entirely — thingsFinder
+ * will then only ever know a barcode if you or a scan taught it one
+ * directly, and will never make an outbound network call.
+ */
+const EXTERNAL_BARCODE_LOOKUP_ENABLED = true;
+
+/**
+ * Minimal HTTP GET returning decoded JSON, or null on absolutely any
+ * failure (network error, timeout, non-2xx, bad JSON). Tries curl first
+ * (most PHP installs have it) and falls back to a stream-context
+ * file_get_contents so this still works without the curl extension. Never
+ * throws — callers treat null as "couldn't find out", not an error.
+ */
+function http_get_json(string $url, array $headers = [], float $timeout = 3.0): ?array
+{
+    $headers[] = 'Accept: application/json';
+    $body = false;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 3,
+        ]);
+        $body = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($body === false || $status < 200 || $status >= 300) {
+            return null;
+        }
+    } elseif (ini_get('allow_url_fopen')) {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => implode("\r\n", $headers),
+                'timeout' => $timeout,
+                'ignore_errors' => true,
+            ],
+        ]);
+        $body = @file_get_contents($url, false, $context);
+        if ($body === false) {
+            return null;
+        }
+        $statusLine = $http_response_header[0] ?? '';
+        if (!preg_match('/\s2\d\d\s/', $statusLine)) {
+            return null;
+        }
+    } else {
+        return null;
+    }
+
+    $data = json_decode($body, true);
+    return is_array($data) ? $data : null;
+}
+
+/**
+ * Looks a barcode up against free, keyless public product databases when
+ * it's not in our own register yet, so we can suggest a name instead of
+ * leaving the field blank. Best-effort only — returns null (never throws)
+ * if nothing is found, the lookup is disabled, or the network call fails;
+ * callers always fall back to letting the person type the name manually.
+ */
+function external_barcode_lookup(string $barcode): ?array
+{
+    if (!EXTERNAL_BARCODE_LOOKUP_ENABLED) {
+        return null;
+    }
+    $ua = ['User-Agent: thingsFinder/1.0 (self-hosted inventory app)'];
+
+    // Open Food Facts — free, keyless, best for grocery/food barcodes.
+    $data = http_get_json(
+        'https://world.openfoodfacts.org/api/v2/product/' . rawurlencode($barcode) . '.json?fields=product_name,brands',
+        $ua
+    );
+    if ($data && (int)($data['status'] ?? 0) === 1 && !empty($data['product']['product_name'])) {
+        $name = trim($data['product']['product_name']);
+        $brand = trim(explode(',', $data['product']['brands'] ?? '')[0]);
+        if ($brand !== '' && stripos($name, $brand) === false) {
+            $name = $brand . ' ' . $name;
+        }
+        return ['name' => $name, 'source' => 'Open Food Facts'];
+    }
+
+    // UPCitemdb's keyless trial lookup — broader general-retail coverage
+    // (tools, electronics, household goods), but rate-limited (~100/day/IP)
+    // and US-catalog-biased, so it's the fallback rather than the first try.
+    $data = http_get_json(
+        'https://api.upcitemdb.com/prod/trial/lookup?upc=' . rawurlencode($barcode),
+        $ua
+    );
+    if ($data && ($data['code'] ?? '') === 'OK' && !empty($data['items'][0]['title'])) {
+        return ['name' => trim($data['items'][0]['title']), 'source' => 'UPCitemdb'];
+    }
+
+    return null;
+}

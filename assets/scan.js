@@ -4,8 +4,9 @@
  * Progressive enhancement only: the form works perfectly with no JavaScript
  * (type a barcode from a physical scanner, or just type an item name) —
  * this script just adds a "Scan" button on browsers that support the
- * native BarcodeDetector API and a camera, and auto-fills/auto-submits
- * when a known barcode is recognized.
+ * native BarcodeDetector API and a camera, auto-fills/auto-submits when a
+ * known barcode is recognized, and otherwise suggests a name from a free
+ * product-lookup API for the person to confirm or edit before saving.
  */
 (function () {
   var hasDetector = 'BarcodeDetector' in window;
@@ -123,13 +124,42 @@
             } else {
               setHint('Known item — "' + data.barcode.name + '". Tap Add to add it.', null);
             }
+            return;
+          }
+          // Not in our own register yet — try a free product-name lookup
+          // before asking the person to type one from scratch. This never
+          // auto-submits: it's a suggestion, not a confirmed match, so it
+          // always waits for a human to confirm or edit it first.
+          suggestFromExternalLookup(code);
+        })
+        .catch(function () {
+          setHint('Could not check that barcode — type a name to be safe.', 'warn');
+          nameInput.focus();
+        });
+    }
+
+    function suggestFromExternalLookup(code) {
+      setHint('Checking barcode databases…', null);
+      fetch('/api/lookup/' + encodeURIComponent(code))
+        .then(function (res) {
+          if (!res.ok) {
+            throw new Error('lookup failed');
+          }
+          return res.json();
+        })
+        .then(function (data) {
+          if (data && data.name) {
+            nameInput.value = data.name;
+            nameInput.focus();
+            nameInput.select();
+            setHint('Found "' + data.name + '" (via ' + data.source + ') — check it, then tap Add to save it.', 'new');
           } else {
             setHint('New barcode — type a name below to remember it.', 'new');
             nameInput.focus();
           }
         })
         .catch(function () {
-          setHint('Could not check that barcode — type a name to be safe.', 'warn');
+          setHint('New barcode — type a name below to remember it.', 'new');
           nameInput.focus();
         });
     }
