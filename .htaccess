@@ -1,0 +1,15 @@
+# Only needed if you deploy this on Apache instead of `php -S`.
+# With PHP's built-in server, router.php handles routing instead — this file is unused there.
+
+RewriteEngine On
+
+# Serve real files/directories as-is (css, js, etc).
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Route /api/* to the API front controller.
+RewriteRule ^api(/.*)?$ api.php [L]
+
+# Everything else goes to the UI front controller.
+RewriteRule ^ index.php [L]
