@@ -384,6 +384,14 @@ h2::after {
 .scan-hint-new { color: var(--accent-dark); font-weight: 600; }
 .scan-hint-warn { color: var(--danger); }
 
+.scan-support-note {
+  margin: -0.15rem 0 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .scanner-overlay {
   position: fixed;
   inset: 0;

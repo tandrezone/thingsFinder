@@ -11,6 +11,11 @@
 (function () {
   var hasDetector = 'BarcodeDetector' in window;
   var hasCamera = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  // Browsers only expose the camera on a "secure context": https://, or
+  // http://localhost. A self-hosted app reached over plain http://<lan-ip>
+  // fails hasCamera for exactly this reason — window.isSecureContext (a
+  // standard browser API, not a guess) tells us whether that's the cause.
+  var isSecure = !!window.isSecureContext;
 
   document.querySelectorAll('.add-item-form').forEach(function (form) {
     var wrap = form.closest('details');
@@ -18,6 +23,7 @@
     var nameInput = form.querySelector('input[name="name"]');
     var scanBtn = form.querySelector('.scan-btn');
     var hint = wrap ? wrap.querySelector('.scan-hint') : null;
+    var supportNote = wrap ? wrap.querySelector('.scan-support-note') : null;
     var overlay = wrap ? wrap.querySelector('.scanner-overlay') : null;
     var video = overlay ? overlay.querySelector('video') : null;
     var cancelBtn = overlay ? overlay.querySelector('.scan-cancel') : null;
@@ -27,6 +33,21 @@
 
     if (hasDetector && hasCamera && scanBtn) {
       scanBtn.hidden = false;
+    } else if (supportNote) {
+      // Explain *why* the Scan button is missing instead of just omitting
+      // it silently — this is the single most common support question.
+      if (!isSecure) {
+        supportNote.textContent = 'Camera scanning needs this page to be loaded over HTTPS (or "localhost") — '
+          + 'browsers block camera access on plain http:// for anything else, which is likely how you\'re '
+          + 'reaching this app. You can still type the barcode below.';
+      } else if (!hasDetector) {
+        supportNote.textContent = 'This browser doesn\'t support in-page barcode scanning (works on Chrome/Edge '
+          + 'on Android; not yet on Safari/iOS). You can still type the barcode below.';
+      } else {
+        supportNote.textContent = 'Camera access isn\'t available on this device or was denied. '
+          + 'You can still type the barcode below.';
+      }
+      supportNote.hidden = false;
     }
 
     var stream = null;

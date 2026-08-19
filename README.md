@@ -75,6 +75,34 @@ JavaScript off.
 Manage the register directly at `/barcodes` — rename or remove an
 association if something got scanned wrong.
 
+### No "Scan" button showing up?
+
+Browsers only allow camera access on a *secure context* — an `https://`
+page, or `http://localhost`/`127.0.0.1`. If you're reaching thingsFinder
+over plain `http://` at a LAN address (e.g. `http://192.168.1.50:8000`,
+which is the normal way to run this on a home network), Android Chrome
+hides the camera API entirely and the Scan button won't appear. The add-item
+form will now tell you this directly (a small note appears where the Scan
+button would be), but the short version is one of:
+
+- **Quickest fix, no extra setup:** on the Android phone, go to
+  `chrome://flags/#unsafely-treat-insecure-origin-as-secure`, add your
+  thingsFinder URL (e.g. `http://192.168.1.50:8000`) to the list, enable the
+  flag, and relaunch Chrome. This tells Chrome to trust camera access on
+  that specific address only.
+- **More robust:** put thingsFinder behind something that terminates HTTPS
+  — a reverse proxy like Caddy (automatic certs if you have a domain), a
+  Tailscale node (`tailscale serve https`), or a tunnel like Cloudflare
+  Tunnel/ngrok.
+- Typing the barcode always works regardless (from the keyboard, or a
+  Bluetooth/USB scanner "gun") — camera scanning is a convenience on top of
+  that, not a requirement.
+
+If you *are* already on HTTPS or localhost and still don't see the button,
+it's more likely the browser itself (Safari on iOS doesn't support this
+API yet) or that the barcode-detection component isn't available on that
+device — the note will say which.
+
 ## QR codes on boxes
 
 Every box page shows a QR code. Scanning it opens

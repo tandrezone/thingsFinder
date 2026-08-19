@@ -426,6 +426,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                   <input type="text" name="barcode" value="<?= h($pendingBarcode) ?>" placeholder="Barcode — scan or type" autocomplete="off" inputmode="numeric">
                   <button type="button" class="secondary scan-btn" hidden><?= icon('camera', 14) ?>Scan</button>
                 </div>
+                <p class="scan-support-note meta" hidden></p>
                 <p class="scan-hint meta" hidden></p>
                 <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun">
                 <button type="submit">Add</button>
