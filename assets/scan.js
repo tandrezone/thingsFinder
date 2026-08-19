@@ -18,7 +18,7 @@
   var isSecure = !!window.isSecureContext;
 
   document.querySelectorAll('.add-item-form').forEach(function (form) {
-    var wrap = form.closest('details');
+    var wrap = form.closest('.add-card-inner') || form.closest('details');
     var barcodeInput = form.querySelector('input[name="barcode"]');
     var nameInput = form.querySelector('input[name="name"]');
     var scanBtn = form.querySelector('.scan-btn');

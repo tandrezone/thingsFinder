@@ -346,10 +346,8 @@ h2::after {
   min-height: 3.4rem;
 }
 .add-card:hover { border-color: var(--accent); transform: none; box-shadow: none; }
-.add-card > details { width: 100%; }
-.add-card summary {
-  list-style: none;
-  cursor: pointer;
+.add-card > .add-card-inner { width: 100%; }
+.add-card-title {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -358,10 +356,8 @@ h2::after {
   font-weight: 600;
   font-size: 0.92rem;
   padding: 0.2rem 0;
+  margin: 0 0 0.6rem;
 }
-.add-card summary::-webkit-details-marker { display: none; }
-.add-card summary:hover { text-decoration: none; }
-.add-card details[open] summary { color: var(--muted); margin-bottom: 0.6rem; }
 .add-card form {
   display: flex;
   flex-direction: column;

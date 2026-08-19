@@ -342,7 +342,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             redirect('/place/' . $placeSlug . '/' . $boxSlug);
         }
 
-        $stmt = $pdo->prepare('SELECT * FROM items WHERE box_id = ? ORDER BY name COLLATE NOCASE');
+        $stmt = $pdo->prepare('SELECT * FROM items WHERE box_id = ? ORDER BY id ASC');
         $stmt->execute([$boxId]);
         $items = $stmt->fetchAll();
         $pendingBarcode = pending_barcode_take();
@@ -418,8 +418,8 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             </li>
           <?php endforeach; ?>
           <li class="card add-card">
-            <details<?= ($pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
-              <summary><?= icon('plus', 15) ?>Add an item</summary>
+            <div class="add-card-inner">
+              <p class="add-card-title"><?= icon('plus', 15) ?>Add an item</p>
               <form method="post" class="add-item-form">
                 <input type="hidden" name="action" value="create_item">
                 <div class="barcode-row">
@@ -435,7 +435,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                 <video playsinline muted></video>
                 <button type="button" class="btn btn-ghost scan-cancel">Cancel</button>
               </div>
-            </details>
+            </div>
           </li>
         </ul>
         <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
