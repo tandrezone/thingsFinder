@@ -48,6 +48,39 @@ have a **quantity** (defaults to 1) — set it when adding an item, or change it
 later from the item's menu; anything more than 1 shows as a small "×N" badge
 on the item.
 
+### Import items from JSON (and from a photo, via any LLM)
+
+Each Items section has an **Import items from JSON** tile that carries the
+whole flow in one place:
+
+1. **Copy the prompt** shown in the tile and paste it into whichever
+   multimodal LLM you use (ChatGPT, Claude, Gemini, …) with a photo of your
+   stuff attached. The prompt tells it to reply with nothing but the JSON
+   this importer expects, and mentions the box or place by name so the model
+   has some context.
+2. **Save its reply** as a `.json` file.
+3. **Upload that file** in the same tile — every valid entry is added to that
+   place/box.
+
+The file is an array of objects: `name` is required, `quantity` is an optional
+integer that defaults to 1 (max 500 items per import). An object wrapper —
+`{"items": [...]}` — works too. Markdown code fences and a stray BOM are
+stripped before parsing, since LLMs add them even when told not to, and a
+single malformed entry is skipped with a note rather than failing the file.
+
+The tile shows the example payload and the full JSON Schema inline, and both
+are fetchable by URL so you can point a tool (or an LLM) straight at them:
+
+- **`/import-schema.json`** — JSON Schema (draft 2020-12) for an import file.
+- **`/import-prompt.txt`** — the photo prompt as plain text.
+
+Both are generated from `import_item_schema()` / `import_prompt()` in
+[`includes/helpers.php`](includes/helpers.php), which is also what
+`import_parse_items()` enforces on upload — so the documented shape and the
+accepted shape can't drift apart. [`example-import.json`](example-import.json)
+and [`photo-import-prompt.txt`](photo-import-prompt.txt) are checked-in copies
+of the same two things for offline reference.
+
 ## Accounts & sharing
 
 The very first time you open thingsFinder, `/setup` asks you to pick a

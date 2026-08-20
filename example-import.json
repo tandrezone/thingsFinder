@@ -1,0 +1,21 @@
+[
+    {
+        "name": "Hammer",
+        "quantity": 1
+    },
+    {
+        "name": "Screwdriver set",
+        "quantity": 1
+    },
+    {
+        "name": "Duct tape",
+        "quantity": 3
+    },
+    {
+        "name": "9V battery",
+        "quantity": 4
+    },
+    {
+        "name": "Zip ties"
+    }
+]

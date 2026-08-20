@@ -115,6 +115,7 @@ function layout(string $title, string $body, array $breadcrumbs = [], ?array $na
   <small>JSON API available under <code>/api</code> (requires login) — e.g. <code>/api/search?q=glue</code></small>
 </footer>
 <script src="/assets/scan.js" defer></script>
+<script src="/assets/copy.js" defer></script>
 </body>
 </html>
 <?php
@@ -234,6 +235,52 @@ function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId
         }
         return true;
     }
+    if ($action === 'import_json') {
+        if (!isset($_FILES['import']) || $_FILES['import']['error'] === UPLOAD_ERR_NO_FILE) {
+            flash_set('Choose a JSON file first.', 'error');
+            return true;
+        }
+        if ($_FILES['import']['error'] !== UPLOAD_ERR_OK) {
+            flash_set('That upload didn\'t go through — try again.', 'error');
+            return true;
+        }
+        $raw = (string)file_get_contents($_FILES['import']['tmp_name']);
+        // LLMs like to wrap JSON in ```json fences even when told not to, and
+        // a copy-paste often picks up a stray BOM — strip both rather than
+        // making the person hand-edit the file.
+        $raw = preg_replace('/^\xEF\xBB\xBF/', '', trim($raw));
+        $raw = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', (string)$raw);
+        $decoded = json_decode((string)$raw, true);
+        if ($decoded === null && json_last_error() !== JSON_ERROR_NONE) {
+            flash_set('That file isn\'t valid JSON: ' . json_last_error_msg() . '.', 'error');
+            return true;
+        }
+        [$rows, $problems] = import_parse_items($decoded);
+        if (!$rows) {
+            flash_set('No items imported — ' . ($problems ? strtolower($problems[0]) : 'that file had no usable entries.'), 'error');
+            return true;
+        }
+        $stmt = $pdo->prepare('INSERT INTO items (box_id, place_id, name, quantity) VALUES (?, ?, ?, ?)');
+        $pdo->beginTransaction();
+        try {
+            foreach ($rows as $row) {
+                $stmt->execute([$boxId, $placeId, $row['name'], $row['quantity']]);
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            flash_set('Something went wrong writing those items — nothing was imported.', 'error');
+            return true;
+        }
+        $added = count($rows);
+        $message = 'Imported ' . $added . ' item' . ($added === 1 ? '' : 's') . '.';
+        if ($problems) {
+            $message .= ' Skipped ' . count($problems) . ' bad entr' . (count($problems) === 1 ? 'y' : 'ies') . ': '
+                . implode(' ', array_slice($problems, 0, 3));
+        }
+        flash_set($message, $problems ? 'error' : 'success');
+        return true;
+    }
     return false;
 }
 
@@ -307,14 +354,79 @@ function handle_scan_action(string $action, string $containerKey): bool
 }
 
 /**
+ * The "Import items from JSON" tile: the prompt to hand an LLM together with
+ * a photo, the schema that prompt produces, and the upload form that eats it.
+ *
+ * All three are shown in one place on purpose — the whole flow is
+ * copy prompt -> paste into any LLM with a photo -> save the reply -> upload
+ * it here, and it only reads as one flow if you can see each step.
+ */
+function render_json_import_section(string $containerLabel = ''): string
+{
+    $prompt = import_prompt($containerLabel);
+    ob_start();
+    ?>
+    <div class="card add-card import-card">
+      <details>
+        <summary><?= icon('upload', 15) ?>Import items from JSON</summary>
+
+        <ol class="import-steps">
+          <li>Copy the prompt below into ChatGPT, Claude, Gemini — whichever you use — and attach a photo of your stuff.</li>
+          <li>Save its reply as a <code>.json</code> file.</li>
+          <li>Upload that file here and every item lands in <?= $containerLabel !== '' ? h($containerLabel) : 'this container' ?>.</li>
+        </ol>
+
+        <div class="import-prompt">
+          <div class="import-prompt-head">
+            <span class="import-prompt-title"><?= icon('sparkle', 14) ?>Prompt for your LLM</span>
+            <div class="row-actions">
+              <button type="button" class="secondary copy-btn" data-copy-target="import-prompt-text"><?= icon('copy', 14) ?><span class="copy-btn-label">Copy prompt</span></button>
+              <a class="btn secondary" href="/import-prompt.txt" download="thingsfinder-photo-prompt.txt"><?= icon('download', 14) ?>.txt</a>
+            </div>
+          </div>
+          <textarea id="import-prompt-text" class="import-prompt-text" rows="10" readonly spellcheck="false" aria-label="Prompt to copy into an LLM"><?= h($prompt) ?></textarea>
+          <p class="copy-status meta" role="status" aria-live="polite"></p>
+        </div>
+
+        <details class="import-schema">
+          <summary>The JSON format it should reply with</summary>
+          <p class="meta">
+            An array of objects. <code>name</code> is required; <code>quantity</code> is an
+            optional integer that defaults to <code>1</code>. Up to <?= IMPORT_MAX_ITEMS ?> items
+            per file. An object wrapper — <code>{"items": [&hellip;]}</code> — works too.
+          </p>
+          <p class="import-schema-label">Example file</p>
+          <pre class="import-code"><code><?= h(import_json_pretty(import_example_items())) ?></code></pre>
+          <p class="import-schema-label">JSON Schema</p>
+          <pre class="import-code import-code-tall"><code><?= h(import_json_pretty(import_item_schema())) ?></code></pre>
+          <p class="meta">
+            Machine-readable copies: <a href="/import-schema.json" target="_blank" rel="noopener">/import-schema.json</a>
+            &middot; <a href="/import-prompt.txt" target="_blank" rel="noopener">/import-prompt.txt</a>
+          </p>
+        </details>
+
+        <form method="post" enctype="multipart/form-data" class="import-form">
+          <input type="hidden" name="action" value="import_json">
+          <input type="file" name="import" accept=".json,application/json,text/plain" required>
+          <button type="submit"><?= icon('upload', 14) ?>Import</button>
+        </form>
+      </details>
+    </div>
+    <?php
+    return (string)ob_get_clean();
+}
+
+/**
  * Renders the "Items" section (card list + add-item tile with barcode
  * scanning) shared by the box page and the place page. Management
  * controls (rename/delete/move/add) only appear when $canEdit is true.
  * $moveDestinations is the list_move_destinations() shape (places, each
  * with a nested `boxes` array) used to build each item's move-to picker —
  * pass [] when $canEdit is false, since it's unused then.
+ * $containerLabel ("Kitchen / Drawer 2") is only used to give the copyable
+ * photo-import prompt a bit of context; blank is fine.
  */
-function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit, array $moveDestinations = []): string
+function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit, array $moveDestinations = [], string $containerLabel = ''): string
 {
     ob_start();
     ?>
@@ -404,6 +516,7 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
     </ul>
     <?php if ($canEdit): ?>
     <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
+    <?= render_json_import_section($containerLabel) ?>
     <?php endif; ?>
     <?php
     return ob_get_clean();
@@ -475,6 +588,25 @@ function render_photo_scan_section(string $containerKey, array $reviewItems, boo
         <?php
     }
     return ob_get_clean();
+}
+
+// -------------------------------------------------------------------------
+// Routes: /import-schema.json and /import-prompt.txt — the contract for the
+// "Import items from JSON" feature. Public and static: they describe the file
+// format, they don't touch anyone's data, and being fetchable by URL means a
+// person (or a tool) can point an LLM straight at them.
+// -------------------------------------------------------------------------
+if ($segments === ['import-schema.json']) {
+    header('Content-Type: application/schema+json; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+    echo import_json_pretty(import_item_schema()), "\n";
+    exit;
+}
+if ($segments === ['import-prompt.txt']) {
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+    echo import_prompt(), "\n";
+    exit;
 }
 
 // -------------------------------------------------------------------------
@@ -1158,7 +1290,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         </div>
 
         <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit, $moveDestinations) ?>
+        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, $place['name'] . ' / ' . $box['name']) ?>
         <?php
         layout($box['name'], ob_get_clean(), [$place['name'] => '/place/' . $placeSlug, $box['name'] => null], $nav);
         exit;
@@ -1335,7 +1467,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     <p class="section-note">Items below are loose in <?= h($place['name']) ?> itself, not inside any box.</p>
     <?php endif; ?>
     <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit, $moveDestinations) ?>
+    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, (string)$place['name']) ?>
     <?php
     layout($place['name'], ob_get_clean(), [$place['name'] => null], $nav);
     exit;

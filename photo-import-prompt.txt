@@ -1,0 +1,26 @@
+Look at the attached photo and list every distinct physical item you can see.
+
+Reply with JSON only — no prose, no explanation, no markdown code fences. The
+reply must be a single JSON array where each element is an object with:
+
+  "name"     (required)  short human-readable label, e.g. "Hammer", "9V battery".
+                         Capitalised like a normal label, max 200 characters.
+  "quantity" (optional)  integer >= 1, how many of that item are visible.
+                         Omit it or use 1 if you can't tell.
+
+Rules:
+- Group identical items into one entry with a combined quantity instead of
+  repeating the same name.
+- Name what the thing is, not what it looks like. Include a brand only when
+  it's clearly readable and useful ("Bosch drill", "AA batteries").
+- Ignore backgrounds, furniture, surfaces, hands, shadows and packaging that
+  isn't itself the item.
+- Don't guess at things you can't actually make out, and don't invent items.
+- If nothing recognisable is visible, reply with exactly: []
+
+Example of a valid reply:
+[
+  { "name": "Hammer", "quantity": 1 },
+  { "name": "9V battery", "quantity": 4 },
+  { "name": "Zip ties" }
+]

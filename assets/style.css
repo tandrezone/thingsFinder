@@ -785,3 +785,122 @@ button.danger:hover, .btn.danger:hover { background: var(--danger); color: #fff;
   .scan-review-list .card-head { flex-direction: column; align-items: stretch; }
   .scan-review-list .inline-form { flex-wrap: wrap; }
 }
+
+/* ------------------------------------------------- JSON / photo-LLM import */
+
+/* The import tile carries a lot more than a file picker — a numbered
+   how-to, a copyable prompt, and the schema — so it drops the centred
+   .add-card layout for a plain left-aligned block. */
+.import-card {
+  min-height: auto;
+  display: block;
+  text-align: left;
+}
+.import-steps {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.import-steps li + li { margin-top: 0.2rem; }
+
+.import-prompt {
+  margin-bottom: 0.75rem;
+}
+.import-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+.import-prompt-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.import-prompt-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+}
+.copy-status {
+  margin: 0.3rem 0 0;
+  min-height: 1.1em;
+}
+.copy-status.is-ok { color: var(--accent-dark); }
+
+.import-schema {
+  margin-bottom: 0.85rem;
+}
+/* The nested schema disclosure sits inside an .add-card, whose summary rule
+   centres its text and hides the marker — neither of which suits a
+   left-aligned sub-section, so both are put back here. */
+.import-card .import-schema > summary {
+  list-style: revert;
+  display: list-item;
+  justify-content: flex-start;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-dark);
+  padding: 0.2rem 0;
+  margin: 0;
+}
+.import-card .import-schema > summary::-webkit-details-marker { display: list-item; }
+.import-schema-label {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.import-code {
+  margin: 0;
+  max-height: 14rem;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.import-code-tall { max-height: 16rem; }
+.import-code code { background: none; padding: 0; font-size: inherit; }
+
+/* Beats `.add-card form { flex-direction: column }` — the picker and the
+   Import button belong on one line here. */
+.import-card .import-form {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+.import-card .import-form input[type="file"] {
+  font-size: 0.85rem;
+  color: var(--muted);
+  flex: 1 1 12rem;
+  min-width: 0;
+  width: auto;
+}
+.import-card .import-form button { flex: 0 0 auto; }
+@media (max-width: 520px) {
+  .import-prompt-head { align-items: flex-start; }
+  .import-card .import-form { flex-direction: column; align-items: stretch; }
+}
