@@ -631,3 +631,157 @@ button.danger:hover, .btn.danger:hover { background: var(--danger); color: #fff;
   .card-head { flex-direction: column; align-items: stretch; gap: 0.35rem; }
   .card-head > .card-menu > summary { margin-left: auto; }
 }
+
+/* --------------------------------------------------------- accounts/login */
+
+/* Menus opened from inside the topbar (the "My stuff" context switcher and
+   the account menu) float as an actual dropdown instead of expanding the
+   surrounding element in place — unlike the same .card-menu pattern used on
+   item cards, where growing the card downward reads fine, growing the whole
+   sticky header would push everything else in the bar around. */
+.topbar .card-menu {
+  position: relative;
+}
+.topbar .card-menu-body {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  z-index: 20;
+  max-width: 16rem;
+}
+.topbar .card-menu-body button,
+.topbar .card-menu-body a.btn {
+  white-space: nowrap;
+}
+
+.context-switcher {
+  flex: 0 0 auto;
+}
+.context-switcher > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.context-switcher > summary::-webkit-details-marker { display: none; }
+.context-switcher > summary:hover { background: var(--bg); color: var(--text); }
+.context-switcher[open] > summary { background: var(--border); color: var(--text); }
+.context-switcher .card-menu-body { min-width: 12rem; left: 0; right: auto; }
+.context-switcher .card-menu-body form.inline-form { justify-content: stretch; }
+.context-switcher .card-menu-body button { width: 100%; justify-content: flex-start; }
+
+/* The centered card that /setup, /login, and the public /view/{token}
+   "not found" state render inside — same idea as .card but sized and
+   positioned for a standalone page rather than a grid item. */
+.auth-card {
+  max-width: 360px;
+  margin: 2.5rem auto 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem 1.75rem 1.9rem;
+  box-shadow: var(--shadow-md);
+}
+.auth-card h1 {
+  text-align: center;
+  margin-bottom: 0.4rem;
+}
+.auth-card .page-subtitle {
+  text-align: center;
+}
+.auth-card .flash {
+  margin-bottom: 1rem;
+}
+
+/* A vertically-stacked form — each label/input pair on its own line — used
+   by the login/setup/account/people forms instead of the inline row layout
+   .stack-form uses for short add-a-thing forms. */
+.stack-form-v {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.5rem;
+}
+.stack-form-v label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.stack-form-v label .meta {
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+.stack-form-v input[type="text"],
+.stack-form-v input[type="password"],
+.stack-form-v select {
+  font-weight: 400;
+}
+.stack-form-v button {
+  margin-top: 0.2rem;
+  justify-content: center;
+}
+
+/* The "add items from a photo" tile on box/place pages — an .add-card with
+   a bit of extra room for the upload form and the OCR-review list that
+   replaces it once a photo's been scanned. */
+.photo-scan-card {
+  min-height: auto;
+  display: block;
+  text-align: left;
+}
+.photo-scan-card form {
+  align-items: flex-start;
+}
+.photo-scan-card input[type="file"] {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.scan-support-note {
+  margin: 0;
+}
+
+/* The OCR "review before adding" list — each row needs room for a name
+   input, a quantity input, and two buttons, which is far too wide for the
+   auto-fill card grid .card-list uses elsewhere, so this is a plain
+   single-column stack instead. */
+.scan-review-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.scan-review-list .card-head {
+  flex-wrap: wrap;
+}
+.scan-review-list .inline-form {
+  flex-wrap: nowrap;
+}
+.scan-review-list .name-input {
+  flex: 1;
+  min-width: 8rem;
+  width: auto;
+}
+@media (max-width: 520px) {
+  .scan-review-list .card-head { flex-direction: column; align-items: stretch; }
+  .scan-review-list .inline-form { flex-wrap: wrap; }
+}

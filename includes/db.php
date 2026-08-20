@@ -29,21 +29,62 @@ function get_db(): PDO
 
 function init_schema(PDO $pdo): void
 {
-    $pdo->exec("CREATE TABLE IF NOT EXISTS places (
+    // One row per person who can log in. Every place belongs to exactly one
+    // user (its owner); other users can be granted access to *all* of an
+    // owner's places/boxes/items via the shares table below.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        slug TEXT NOT NULL UNIQUE,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
 
+    // Grants user_id access to everything owner_id owns, at the given
+    // permission. 'edit' can do everything the owner can (add/rename/
+    // delete); 'view' can only look. There's no row for an owner viewing
+    // their own stuff — that's always full access, handled in code.
+    $pdo->exec("CREATE TABLE IF NOT EXISTS shares (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission TEXT NOT NULL CHECK (permission IN ('view', 'edit')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_id, user_id)
+    )");
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id)');
+
+    // owner_id is nullable at the schema level only so the migration below
+    // can add it to a pre-login database in one ALTER TABLE; every place is
+    // given a real owner as soon as one exists (see migrate_places_table_if_needed
+    // and the first-run setup flow in includes/auth.php). A place's slug is
+    // only unique *within its owner's* places, not globally, so two people
+    // can each have their own "Garage".
+    $pdo->exec("CREATE TABLE IF NOT EXISTS places (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_id, slug)
+    )");
+    migrate_places_table_if_needed($pdo);
+
+    // share_token is the box's public, unguessable identifier — the QR
+    // code / printable label link to /view/{share_token}, a read-only page
+    // that needs no login, instead of to the box's real (sequential, easy
+    // to guess) id.
     $pdo->exec("CREATE TABLE IF NOT EXISTS boxes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         place_id INTEGER NOT NULL REFERENCES places(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         slug TEXT NOT NULL,
+        share_token TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE(place_id, slug)
     )");
+    migrate_boxes_table_if_needed($pdo);
+    $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_boxes_token ON boxes(share_token)');
 
     // Items can live directly in a place, or inside a box within a place —
     // exactly one of box_id/place_id is set (enforced by the CHECK below).
@@ -116,6 +157,144 @@ function migrate_items_table_if_needed(PDO $pdo): void
     }
 }
 
+/**
+ * Upgrades an existing `places` table created before logins existed (no
+ * owner_id column, slug globally unique) to the current shape. Every
+ * existing place ends up with owner_id NULL until the first-run setup flow
+ * assigns them all to the first account created (see ensure_first_user()).
+ */
+function migrate_places_table_if_needed(PDO $pdo): void
+{
+    $cols = array_column($pdo->query('PRAGMA table_info(places)')->fetchAll(), 'name');
+    if (in_array('owner_id', $cols, true)) {
+        return;
+    }
+    $pdo->beginTransaction();
+    try {
+        $pdo->exec('ALTER TABLE places RENAME TO places_old_migration');
+        $pdo->exec("CREATE TABLE places (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(owner_id, slug)
+        )");
+        $pdo->exec('INSERT INTO places (id, owner_id, name, slug, created_at)
+                    SELECT id, NULL, name, slug, created_at FROM places_old_migration');
+        $pdo->exec('DROP TABLE places_old_migration');
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/** Adds share_token to a pre-existing `boxes` table and backfills a random token for every row that lacks one. */
+function migrate_boxes_table_if_needed(PDO $pdo): void
+{
+    $cols = array_column($pdo->query('PRAGMA table_info(boxes)')->fetchAll(), 'name');
+    if (!in_array('share_token', $cols, true)) {
+        $pdo->exec('ALTER TABLE boxes ADD COLUMN share_token TEXT');
+    }
+    $stmt = $pdo->query('SELECT id FROM boxes WHERE share_token IS NULL');
+    $ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($ids as $id) {
+        $pdo->prepare('UPDATE boxes SET share_token = ? WHERE id = ?')->execute([new_share_token(), $id]);
+    }
+}
+
+/** A random, unguessable token for a box's public read-only link. */
+function new_share_token(): string
+{
+    return bin2hex(random_bytes(16));
+}
+
+/**
+ * Runs once per boot: if there are no users yet, the app is either brand
+ * new or being upgraded from a version with no login. Either way there's
+ * nothing more to do here — the /setup route (includes/auth.php) handles
+ * creating the first account and, if there are pre-existing owner-less
+ * places (an upgrade), assigns them all to that first account.
+ */
+function has_any_users(PDO $pdo): bool
+{
+    return (int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn() > 0;
+}
+
+function create_user(PDO $pdo, string $username, string $password): int
+{
+    $pdo->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)')
+        ->execute([$username, password_hash($password, PASSWORD_DEFAULT)]);
+    return (int)$pdo->lastInsertId();
+}
+
+function find_user_by_username(PDO $pdo, string $username): ?array
+{
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE username = ?');
+    $stmt->execute([$username]);
+    return $stmt->fetch() ?: null;
+}
+
+function find_user_by_id(PDO $pdo, int $id): ?array
+{
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE id = ?');
+    $stmt->execute([$id]);
+    return $stmt->fetch() ?: null;
+}
+
+/** Every owner-less place (from an upgrade) is handed to this user — called once, right after the first account is created. */
+function adopt_orphan_places(PDO $pdo, int $userId): void
+{
+    $pdo->prepare('UPDATE places SET owner_id = ? WHERE owner_id IS NULL')->execute([$userId]);
+}
+
+/** Creates a share (or updates the permission of an existing one). */
+function upsert_share(PDO $pdo, int $ownerId, int $userId, string $permission): void
+{
+    $pdo->prepare(
+        'INSERT INTO shares (owner_id, user_id, permission) VALUES (?, ?, ?)
+         ON CONFLICT(owner_id, user_id) DO UPDATE SET permission = excluded.permission'
+    )->execute([$ownerId, $userId, $permission]);
+}
+
+function delete_share(PDO $pdo, int $ownerId, int $userId): void
+{
+    $pdo->prepare('DELETE FROM shares WHERE owner_id = ? AND user_id = ?')->execute([$ownerId, $userId]);
+}
+
+/** The permission $userId has on $ownerId's data, or null if none was granted (and they're not the owner). */
+function find_share(PDO $pdo, int $ownerId, int $userId): ?array
+{
+    $stmt = $pdo->prepare('SELECT * FROM shares WHERE owner_id = ? AND user_id = ?');
+    $stmt->execute([$ownerId, $userId]);
+    return $stmt->fetch() ?: null;
+}
+
+/** People you've granted access to your own stuff — for the "People" management page. */
+function list_shares_granted_by(PDO $pdo, int $ownerId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT shares.*, users.username FROM shares
+         JOIN users ON users.id = shares.user_id
+         WHERE shares.owner_id = ? ORDER BY users.username COLLATE NOCASE'
+    );
+    $stmt->execute([$ownerId]);
+    return $stmt->fetchAll();
+}
+
+/** Other accounts that have granted *you* access — for the context switcher. */
+function list_shares_received_by(PDO $pdo, int $userId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT shares.*, users.username AS owner_username FROM shares
+         JOIN users ON users.id = shares.owner_id
+         WHERE shares.user_id = ? ORDER BY users.username COLLATE NOCASE'
+    );
+    $stmt->execute([$userId]);
+    return $stmt->fetchAll();
+}
+
 /** Looks up a registered barcode → item association, if any. */
 function find_barcode(PDO $pdo, string $barcode): ?array
 {
@@ -148,15 +327,15 @@ function slugify(string $text): string
     return $text;
 }
 
-/** Generate a slug for a place that is unique across all places. */
-function unique_place_slug(PDO $pdo, string $name, ?int $excludeId = null): string
+/** Generate a slug for a place that is unique among one owner's places (two different people can each have a "garage"). */
+function unique_place_slug(PDO $pdo, int $ownerId, string $name, ?int $excludeId = null): string
 {
     $base = slugify($name);
     $slug = $base;
     $n = 2;
     while (true) {
-        $sql = 'SELECT COUNT(*) FROM places WHERE slug = ?';
-        $params = [$slug];
+        $sql = 'SELECT COUNT(*) FROM places WHERE owner_id = ? AND slug = ?';
+        $params = [$ownerId, $slug];
         if ($excludeId !== null) {
             $sql .= ' AND id != ?';
             $params[] = $excludeId;
@@ -194,10 +373,10 @@ function unique_box_slug(PDO $pdo, int $placeId, string $name, ?int $excludeId =
     }
 }
 
-function find_place_by_slug(PDO $pdo, string $slug): ?array
+function find_place_by_slug(PDO $pdo, int $ownerId, string $slug): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM places WHERE slug = ?');
-    $stmt->execute([$slug]);
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE owner_id = ? AND slug = ?');
+    $stmt->execute([$ownerId, $slug]);
     $row = $stmt->fetch();
     return $row ?: null;
 }
@@ -206,6 +385,15 @@ function find_box_by_slug(PDO $pdo, int $placeId, string $slug): ?array
 {
     $stmt = $pdo->prepare('SELECT * FROM boxes WHERE place_id = ? AND slug = ?');
     $stmt->execute([$placeId, $slug]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+/** Looks up a box by its public share token, for the read-only /view/{token} page — no owner check, that's the point. */
+function find_box_by_token(PDO $pdo, string $token): ?array
+{
+    $stmt = $pdo->prepare('SELECT * FROM boxes WHERE share_token = ?');
+    $stmt->execute([$token]);
     $row = $stmt->fetch();
     return $row ?: null;
 }

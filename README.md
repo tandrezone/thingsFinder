@@ -5,8 +5,10 @@ A tiny self-hosted app for keeping track of where your stuff is: which **place**
 permanent URL like `/place/garage/tools-bin-2`, and the search bar finds any
 item by name across every place and box.
 
-Built with plain PHP + SQLite + HTML/CSS (no framework, no build step, no
-login).
+Built with plain PHP + SQLite + HTML/CSS (no framework, no build step). Each
+person gets their own login and their own places/boxes/items; you can invite
+someone else to see (or edit) your stuff too — see [Accounts &
+sharing](#accounts--sharing).
 
 ## Running it
 
@@ -18,7 +20,8 @@ php -S localhost:8000 router.php
 ```
 
 Open http://localhost:8000 — the SQLite database (`data/database.sqlite`) is
-created automatically on first request.
+created automatically on first request, and the first thing you'll see is a
+one-time "set up your account" page (see below).
 
 ### Deploying to Apache instead
 
@@ -44,6 +47,46 @@ Every rename/delete is a plain HTML form (no JavaScript required). Items also
 have a **quantity** (defaults to 1) — set it when adding an item, or change it
 later from the item's menu; anything more than 1 shows as a small "×N" badge
 on the item.
+
+## Accounts & sharing
+
+The very first time you open thingsFinder, `/setup` asks you to pick a
+username and password — that becomes the first account, and anything already
+in the database (from an older, login-less copy of thingsFinder) becomes
+that account's own stuff. After that, `/setup` stops working and everyone
+signs in at `/login` instead.
+
+Every place belongs to exactly one account. There's no self-signup — from
+**People** (in the account menu, top right), you add someone by choosing a
+username and a starting password for them yourself; if that username
+already exists, leave the password blank and it just grants that existing
+account access to yours instead. Each person you add gets one of two
+permission levels over *everything* you own (there's no per-place sharing):
+
+- **View only** — they can look at all your places, boxes, and items, and
+  use search, but every add/rename/delete control is hidden, and the server
+  rejects the underlying request even if someone tries it directly.
+- **Can edit** — full access, as if it were their own: create, rename, and
+  delete places, boxes, and items.
+
+You can change or revoke either at any time from **People**; revoking takes
+effect immediately.
+
+Once someone has shared their stuff with you, a "My stuff" switcher appears
+in the top bar next to the logo — pick your own account or any account
+that's shared with you, and everything you see (including search) scopes to
+whichever one is currently selected. Your own account always has full
+access to your own stuff regardless of any share.
+
+Change your own password any time from **Account** in the same menu.
+
+**What sharing doesn't do:** there's no email, no invite links, and no
+password reset flow — if someone forgets their password, sign in as the
+account owner (or that user, if they still remember it) and set a new one
+from **Account**. Passwords are hashed with PHP's `password_hash()`; there's
+otherwise no CSRF protection, matching the rest of the app's plain-HTML-forms
+approach — fine on a home network or behind a VPN, worth keeping in mind if
+you expose thingsFinder to the open internet.
 
 ## Barcodes
 
@@ -111,10 +154,25 @@ device — the note will say which.
 
 ## QR codes on boxes
 
-Every box page shows a QR code. Scanning it opens
-`/api/boxes/{id}/contents` — the JSON contents of that box (its name, its
-place, and every item in it) — so you can point a phone straight at a box's
-label and see what's inside without touching the UI.
+Every box page shows a QR code. Scanning it opens a public, read-only page —
+`/view/{token}` — showing that box's name, its place, and every item in it,
+with no login and no add/rename/delete controls of any kind: whoever scans
+it can only look. That's on purpose, so you (or anyone else who can see the
+physical label) can check a box's contents without needing an account or
+even a network connection to your account's data beyond that one box.
+
+The `{token}` is a random, unguessable 128-bit value (`boxes.share_token`)
+rather than the box's numeric ID — nothing else about your account (your
+username, your other places/boxes, or even this box's own numeric ID) is
+reachable from it. Anyone with the link or a photo of the QR code can view
+that one box, indefinitely — there's currently no way to invalidate or
+regenerate a token short of deleting and re-creating the box, so treat the
+printed label with the same care you'd give a link you don't want to hand
+out freely (though in practice, most people only see it printed on a box
+sitting in their own garage).
+
+If you're signed in and want the same data as authenticated JSON instead,
+`/api/boxes/{id}/contents` still exists — see [JSON API](#json-api).
 
 - Print a label: use the "Download QR (SVG)" or "Download QR (PNG)" links on
   the box page.
@@ -149,13 +207,60 @@ code with text next to it.
   label sizes. If you have long names, use a bigger `?w=`/`?h=`, or keep box
   names short and let the QR code carry the rest of the detail.
 
+## Add items from a photo
+
+Both box pages and place pages have an "Add items from a photo" tile (below
+the QR/label blocks, above the item list). Take or upload a photo of a
+**printed or handwritten list** — a packing list, a receipt, a sticky note —
+and thingsFinder reads the text and turns each line into a candidate item,
+which you can edit or remove before anything is actually added. Tap **Add N
+items** and whatever's left in the list gets created in that box or place at
+once.
+
+This is text OCR, not object recognition — point the camera at *writing*,
+not at the items themselves; a photo of a pile of tools won't produce a
+list of tool names.
+
+- Requires the free, open-source [Tesseract OCR](https://github.com/tesseract-ocr/tesseract)
+  command-line program installed on the server, plus PHP's `shell_exec()`
+  enabled (some hosts disable it by default). If either is missing, the tile
+  says so instead of showing the upload form — everything else in
+  thingsFinder works fine either way, this is the one feature with an extra
+  system dependency (the same idea as GD being optional for PNG export).
+  - **Debian/Ubuntu:** `sudo apt install tesseract-ocr`
+  - **macOS (Homebrew):** `brew install tesseract`
+  - **Windows:** install from the [tesseract-ocr/tesseract releases](https://github.com/tesseract-ocr/tesseract/releases)
+    or via `choco install tesseract`, and make sure `tesseract.exe` is on
+    your `PATH`.
+- On a phone, the same file input opens the camera directly (no JavaScript
+  needed); on desktop it's a normal file picker.
+- Photos must be JPEG, PNG, WEBP, or BMP, 8MB or smaller. **HEIC photos from
+  iPhones aren't supported** — set the iPhone's camera format to "Most
+  Compatible" (Settings → Camera → Formats) so it saves JPEGs, or convert
+  the photo first.
+- **Privacy:** the uploaded photo is only ever written to a temporary file
+  for the moment it takes Tesseract to read it, then deleted immediately —
+  thingsFinder never keeps the photo itself, only the text lines it found.
+- The in-progress review list (what you haven't added or discarded yet)
+  lives in your session, not the database, so it's private to you and
+  disappears if you log out or clear cookies before adding it.
+
 ## JSON API
 
-Everything under `/api` returns JSON.
+Everything under `/api` returns JSON, and every route requires being logged
+in (the same session cookie as the regular site — `fetch()` calls from
+thingsFinder's own pages send it automatically; from a script, send the
+`PHPSESSID` cookie you got from `POST /login`). Every places/boxes/items
+route is scoped to whichever account is currently active for that session
+(see [Accounts & sharing](#accounts--sharing)) — a view-only share can call
+any `GET` here but a `POST`/`PUT`/`PATCH`/`DELETE` gets a `403`. The barcode
+register (`/api/barcodes...`) is the exception: it's shared across every
+account on the install, same as the `/barcodes` page, so it isn't scoped to
+the active account, just to being logged in.
 
 | Method | Path | Body | Description |
 |---|---|---|---|
-| GET | `/api/places` | | List all places |
+| GET | `/api/places` | | List all places (in the active account) |
 | POST | `/api/places` | `{"name": "Garage"}` | Create a place |
 | GET | `/api/places/{id}` | | Get one place |
 | PUT | `/api/places/{id}` | `{"name": "..."}` | Rename a place |
@@ -169,7 +274,7 @@ Everything under `/api` returns JSON.
 | DELETE | `/api/boxes/{id}` | | Delete a box (and its items) |
 | GET | `/api/boxes/{id}/items` | | List items in a box |
 | POST | `/api/boxes/{id}/items` | `{"name": "Glue gun", "quantity": 1}` | Create an item in a box (`quantity` optional, defaults to 1) |
-| GET | `/api/boxes/{id}/contents` | | Box + place + all its items — what the box's QR code links to |
+| GET | `/api/boxes/{id}/contents` | | Box + place + all its items — an authenticated JSON equivalent of the box's public `/view/{token}` page |
 | GET | `/api/items/{id}` | | Get one item |
 | PUT | `/api/items/{id}` | `{"name": "...", "quantity": 2}` | Rename an item and/or update its quantity |
 | DELETE | `/api/items/{id}` | | Delete an item |
@@ -181,32 +286,46 @@ Everything under `/api` returns JSON.
 | DELETE | `/api/barcodes/{code}` | | Remove a barcode association |
 | GET | `/api/lookup/{code}` | | Best-effort external name suggestion for a barcode; `{"barcode","name","source"}`, name/source null if nothing found. Never touches the register itself. |
 
-Example:
+Example (`-c`/`-b` keep the session cookie from login for the follow-up calls):
 
 ```bash
-curl -X POST localhost:8000/api/places -d '{"name":"Garage"}'
-curl "localhost:8000/api/search?q=glue"
+curl -c cookies.txt -X POST localhost:8000/login -d "username=you" -d "password=yourpassword"
+curl -b cookies.txt -X POST localhost:8000/api/places -d '{"name":"Garage"}'
+curl -b cookies.txt "localhost:8000/api/search?q=glue"
 ```
 
 ## Data model
 
 ```
-places        (id, name, slug)
-boxes         (id, place_id, name, slug)             -- slug unique within its place
-items         (id, box_id, place_id, name, quantity) -- exactly one of box_id/place_id is set
-barcode_items (barcode, name)                        -- barcode is the primary key
+users         (id, username, password_hash)
+shares        (id, owner_id, user_id, permission)     -- permission is 'view' or 'edit'; one row per (owner, user)
+places        (id, owner_id, name, slug)               -- slug unique within its owner
+boxes         (id, place_id, name, slug, share_token)  -- slug unique within its place; share_token is the public /view/ link
+items         (id, box_id, place_id, name, quantity)   -- exactly one of box_id/place_id is set
+barcode_items (barcode, name)                          -- barcode is the primary key; shared across all accounts
 ```
 
 An item lives either in a box or directly in a place — never both, never
-neither (enforced by a `CHECK` constraint). If you upgrade from an older
-copy of thingsFinder, the database is migrated in place the first time it
-runs: existing items keep their box, gain a `quantity` of 1, and nothing is
-lost.
+neither (enforced by a `CHECK` constraint). A `shares` row grants `user_id`
+either `view` or `edit` access to everything `owner_id` owns — there's no
+per-place sharing, and an owner always implicitly has `edit` on their own
+data without a `shares` row. If you upgrade from an older copy of
+thingsFinder, the database is migrated in place the first time it runs:
+
+- Pre-quantity/pre-place-items copies: existing items keep their box, gain a
+  `quantity` of 1, and nothing is lost.
+- Pre-login copies (no `users`/`shares`/`owner_id`/`share_token` at all):
+  every existing place is adopted by whichever account you create at
+  `/setup`, and every existing box gets a freshly-generated `share_token` so
+  its QR code and printable label keep working, pointing at the new
+  `/view/{token}` page instead of the old JSON endpoint.
 
 Deleting a place deletes its boxes and everything in them, plus any items
-placed directly in it; deleting a box deletes its items (all via SQLite
-`ON DELETE CASCADE`). Slugs are auto-generated from the name and
-de-duplicated (`bin-2`, `bin-2-2`, …) so URLs are always stable and unique.
+placed directly in it; deleting a box deletes its items; deleting a user
+deletes everything they own, plus every `shares` row involving them (all via
+SQLite `ON DELETE CASCADE`). Slugs are auto-generated from the name and
+de-duplicated (`bin-2`, `bin-2-2`, …) so URLs are always stable and unique
+within their owner.
 
 ## Project structure
 
@@ -216,6 +335,8 @@ thingsfinder/
   index.php            # UI front controller (all HTML pages)
   api.php              # JSON API front controller
   includes/db.php        # SQLite connection + schema + slug helpers
+  includes/auth.php      # login/session/sharing/permission helpers
+  includes/ocr.php        # "add items from a photo": Tesseract OCR wrapper
   includes/helpers.php   # JSON/HTML/routing helpers
   includes/qrcode.php    # thin wrapper: URL -> inline SVG / downloadable SVG/PNG
   includes/qrcode-lib.php # vendored MIT QR encoder (no deps, no GD required)
@@ -229,8 +350,13 @@ thingsfinder/
 
 ## Notes / possible extensions
 
-- No authentication — anyone who can reach the app can view/edit everything.
-  Fine for a home network; put it behind a VPN or add basic auth if exposing
-  it publicly.
+- Sharing is all-or-nothing per account (view or edit everything an owner
+  has) rather than per-place — simpler to reason about, but if you wanted
+  to share just one place with someone (a shared garage, say, without
+  handing over the rest of your house), that'd need a schema change.
+- There's no CSRF protection anywhere in the app (consistent with its
+  plain-HTML-forms, no-JavaScript-required design) and no password reset
+  flow — fine on a home network or behind a VPN, worth adding both if you
+  expose thingsFinder to the open internet.
 - Items have a name and a quantity. Notes or a photo per item would be easy
   further additions to the `items` table and the corresponding forms.
