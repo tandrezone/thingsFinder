@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="thingsFinder">
+  <title>thingsFinder</title>
+  <rect width="64" height="64" rx="13" fill="#f6f5f2"/>
+  <!-- box body -->
+  <rect x="11" y="27" width="42" height="24" rx="3.5" fill="#b5652b"/>
+  <!-- box lid, overhanging slightly, darker for depth -->
+  <rect x="6" y="13" width="52" height="14" rx="3.5" fill="#8f4d1f"/>
+  <!-- flap seam through the lid -->
+  <rect x="29" y="13" width="6" height="14" fill="#f6f5f2"/>
+</svg>

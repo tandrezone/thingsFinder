@@ -46,6 +46,7 @@ function layout(string $title, string $body, array $breadcrumbs = [], ?array $na
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= h($title) ?> · thingsFinder</title>
+<?= favicon_tags() ?>
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
@@ -128,6 +129,7 @@ function layout_public(string $title, string $body): void
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= h($title) ?> · thingsFinder</title>
+<?= favicon_tags() ?>
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
@@ -158,9 +160,10 @@ function render_error(int $status, string $message, ?array $nav = null): void
  * directly in a place OR inside a box, so this is called from both the
  * place page and the box page — exactly one of $boxId/$placeId is non-null.
  * Returns true if $action was item-related (caller should stop looking at
- * its own actions and redirect); false otherwise.
+ * its own actions and redirect); false otherwise. $ownerId scopes
+ * move_item's destination picker to the active account.
  */
-function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId): bool
+function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId, int $ownerId): bool
 {
     if ($action === 'create_item') {
         $name = trim($_POST['name'] ?? '');
@@ -218,6 +221,16 @@ function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId
         if ($id) {
             $pdo->prepare('DELETE FROM items WHERE id = ?')->execute([$id]);
             flash_set('Item deleted.', 'success');
+        }
+        return true;
+    }
+    if ($action === 'move_item') {
+        $id = (int)($_POST['id'] ?? 0);
+        $destination = (string)($_POST['destination'] ?? '');
+        if ($id && move_item_to($pdo, $id, $ownerId, $destination)) {
+            flash_set('Item moved.', 'success');
+        } else {
+            flash_set('Couldn\'t move that item — pick a valid destination.', 'error');
         }
         return true;
     }
@@ -296,9 +309,12 @@ function handle_scan_action(string $action, string $containerKey): bool
 /**
  * Renders the "Items" section (card list + add-item tile with barcode
  * scanning) shared by the box page and the place page. Management
- * controls (rename/delete/add) only appear when $canEdit is true.
+ * controls (rename/delete/move/add) only appear when $canEdit is true.
+ * $moveDestinations is the list_move_destinations() shape (places, each
+ * with a nested `boxes` array) used to build each item's move-to picker —
+ * pass [] when $canEdit is false, since it's unused then.
  */
-function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit): string
+function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit, array $moveDestinations = []): string
 {
     ob_start();
     ?>
@@ -328,6 +344,27 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
                   <input type="number" name="quantity" value="<?= (int)$it['quantity'] ?>" min="1" class="qty-input" aria-label="Quantity">
                   <button type="submit" class="secondary"><?= icon('edit', 14) ?>Save</button>
                 </form>
+                <?php if ($moveDestinations): ?>
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="action" value="move_item">
+                  <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+                  <select name="destination" aria-label="Move to">
+                    <?php foreach ($moveDestinations as $place): ?>
+                      <optgroup label="<?= h($place['name']) ?>">
+                        <option value="place:<?= (int)$place['id'] ?>" <?= ($it['box_id'] === null && (int)$it['place_id'] === (int)$place['id']) ? 'selected' : '' ?>>
+                          (loose in <?= h($place['name']) ?>)
+                        </option>
+                        <?php foreach ($place['boxes'] as $b): ?>
+                          <option value="box:<?= (int)$b['id'] ?>" <?= ((int)($it['box_id'] ?? 0) === (int)$b['id']) ? 'selected' : '' ?>>
+                            <?= h($b['name']) ?>
+                          </option>
+                        <?php endforeach; ?>
+                      </optgroup>
+                    <?php endforeach; ?>
+                  </select>
+                  <button type="submit" class="secondary"><?= icon('move', 14) ?>Move</button>
+                </form>
+                <?php endif; ?>
                 <form method="post" class="inline-form" onsubmit="return confirm('Delete this item?');">
                   <input type="hidden" name="action" value="delete_item">
                   <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
@@ -1010,7 +1047,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         if ($method === 'POST') {
             require_edit($pdo);
             $action = $_POST['action'] ?? '';
-            if (handle_item_action($pdo, $action, $boxId, null)) {
+            if (handle_item_action($pdo, $action, $boxId, null, $ownerId)) {
                 // handled — falls through to the redirect below
             } elseif (handle_scan_action($action, $scanKey)) {
                 // handled — falls through to the redirect below
@@ -1030,6 +1067,17 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                     flash_set('Box renamed.', 'success');
                     redirect('/place/' . $placeSlug . '/' . $slug);
                 }
+            } elseif ($action === 'move_box') {
+                $newPlaceId = (int)($_POST['place_id'] ?? 0);
+                $newSlug = move_box_to($pdo, $boxId, $ownerId, $newPlaceId);
+                if ($newSlug !== null) {
+                    $newPlaceStmt = $pdo->prepare('SELECT slug FROM places WHERE id = ?');
+                    $newPlaceStmt->execute([$newPlaceId]);
+                    $newPlaceSlug = $newPlaceStmt->fetchColumn();
+                    flash_set('Box moved.', 'success');
+                    redirect('/place/' . $newPlaceSlug . '/' . $newSlug);
+                }
+                flash_set('Couldn\'t move that box — pick a valid place.', 'error');
             } elseif ($action === 'delete_box') {
                 $pdo->prepare('DELETE FROM boxes WHERE id = ?')->execute([$boxId]);
                 flash_set('Box deleted.', 'success');
@@ -1044,6 +1092,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         $pendingBarcode = pending_barcode_take();
         $pendingName = pending_name_take();
         $reviewItems = ocr_review_get($scanKey);
+        $moveDestinations = $canEdit ? list_move_destinations($pdo, $ownerId) : [];
 
         ob_start();
         ?>
@@ -1061,6 +1110,17 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                 <input type="text" name="name" value="<?= h($box['name']) ?>" required>
                 <button type="submit" class="secondary"><?= icon('edit', 14) ?>Rename</button>
               </form>
+              <?php if (count($moveDestinations) > 1): ?>
+              <form method="post" class="inline-form">
+                <input type="hidden" name="action" value="move_box">
+                <select name="place_id" aria-label="Move to place">
+                  <?php foreach ($moveDestinations as $p): ?>
+                    <option value="<?= (int)$p['id'] ?>" <?= ((int)$p['id'] === $placeId) ? 'selected' : '' ?>><?= h($p['name']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+                <button type="submit" class="secondary"><?= icon('move', 14) ?>Move</button>
+              </form>
+              <?php endif; ?>
               <form method="post" class="inline-form" onsubmit="return confirm('Delete this box and all its items?');">
                 <input type="hidden" name="action" value="delete_box">
                 <button type="submit" class="danger"><?= icon('trash', 14) ?>Delete box</button>
@@ -1098,7 +1158,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         </div>
 
         <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit) ?>
+        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit, $moveDestinations) ?>
         <?php
         layout($box['name'], ob_get_clean(), [$place['name'] => '/place/' . $placeSlug, $box['name'] => null], $nav);
         exit;
@@ -1112,7 +1172,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     if ($method === 'POST') {
         require_edit($pdo);
         $action = $_POST['action'] ?? '';
-        if (handle_item_action($pdo, $action, null, $placeId)) {
+        if (handle_item_action($pdo, $action, null, $placeId, $ownerId)) {
             // handled — falls through to the redirect below
         } elseif (handle_scan_action($action, $scanKey)) {
             // handled — falls through to the redirect below
@@ -1139,6 +1199,16 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                 $slug = unique_box_slug($pdo, $placeId, $name, $id);
                 $pdo->prepare('UPDATE boxes SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $id]);
                 flash_set('Box renamed.', 'success');
+            }
+        } elseif ($action === 'move_box') {
+            $id = (int)($_POST['id'] ?? 0);
+            $newPlaceId = (int)($_POST['place_id'] ?? 0);
+            if ($id) {
+                if (move_box_to($pdo, $id, $ownerId, $newPlaceId) !== null) {
+                    flash_set('Box moved.', 'success');
+                } else {
+                    flash_set('Couldn\'t move that box — pick a valid place.', 'error');
+                }
             }
         } elseif ($action === 'delete_box') {
             $id = (int)($_POST['id'] ?? 0);
@@ -1175,6 +1245,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     $pendingBarcode = pending_barcode_take();
     $pendingName = pending_name_take();
     $reviewItems = ocr_review_get($scanKey);
+    $moveDestinations = $canEdit ? list_move_destinations($pdo, $ownerId) : [];
 
     ob_start();
     ?>
@@ -1223,6 +1294,18 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                   <input type="text" name="name" value="<?= h($b['name']) ?>" required>
                   <button type="submit" class="secondary"><?= icon('edit', 14) ?>Rename</button>
                 </form>
+                <?php if (count($moveDestinations) > 1): ?>
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="action" value="move_box">
+                  <input type="hidden" name="id" value="<?= (int)$b['id'] ?>">
+                  <select name="place_id" aria-label="Move to place">
+                    <?php foreach ($moveDestinations as $p): ?>
+                      <option value="<?= (int)$p['id'] ?>" <?= ((int)$p['id'] === $placeId) ? 'selected' : '' ?>><?= h($p['name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                  <button type="submit" class="secondary"><?= icon('move', 14) ?>Move</button>
+                </form>
+                <?php endif; ?>
                 <form method="post" class="inline-form" onsubmit="return confirm('Delete this box and all its items?');">
                   <input type="hidden" name="action" value="delete_box">
                   <input type="hidden" name="id" value="<?= (int)$b['id'] ?>">
@@ -1252,7 +1335,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     <p class="section-note">Items below are loose in <?= h($place['name']) ?> itself, not inside any box.</p>
     <?php endif; ?>
     <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit) ?>
+    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit, $moveDestinations) ?>
     <?php
     layout($place['name'], ob_get_clean(), [$place['name'] => null], $nav);
     exit;

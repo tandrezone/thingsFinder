@@ -1,0 +1,16 @@
+{
+  "name": "thingsFinder",
+  "short_name": "thingsFinder",
+  "description": "Keep track of which place and which box your stuff is in.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#b5652b",
+  "icons": [
+    { "src": "/assets/favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "/assets/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/assets/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/assets/apple-touch-icon.png", "type": "image/png", "sizes": "180x180", "purpose": "maskable" }
+  ]
+}

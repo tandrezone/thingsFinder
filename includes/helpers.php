@@ -64,6 +64,7 @@ function icon_paths(): array
         'user'     => '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
         'log-out'  => '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
         'eye'      => '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+        'move'     => '<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>',
     ];
 }
 
@@ -74,6 +75,22 @@ function icon(string $name, int $size = 16): string
     return '<svg class="icon" width="' . $size . '" height="' . $size . '" viewBox="0 0 24 24" '
         . 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
         . 'stroke-linejoin="round" aria-hidden="true" focusable="false">' . $body . '</svg>';
+}
+
+/**
+ * The <head> icon links, shared by both page shells in index.php so the two
+ * can't drift apart. The box mark lives in assets/favicon.svg (modern
+ * browsers prefer it and scale it to any size); favicon.ico sits at the
+ * webroot because browsers request /favicon.ico on their own, and it carries
+ * pixel-tuned 16/32/48 bitmaps that stay crisp where the SVG would blur.
+ */
+function favicon_tags(): string
+{
+    return '<link rel="icon" href="/favicon.ico" sizes="32x32">' . "\n"
+        . '<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">' . "\n"
+        . '<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">' . "\n"
+        . '<link rel="manifest" href="/site.webmanifest">' . "\n"
+        . '<meta name="theme-color" content="#b5652b">' . "\n";
 }
 
 /** Absolute base URL of the running app, e.g. "http://localhost:8000". */

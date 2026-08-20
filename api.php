@@ -19,14 +19,14 @@
  *   GET    /api/places/{placeId}/boxes
  *   POST   /api/places/{placeId}/boxes     { name }
  *   GET    /api/boxes/{id}
- *   PUT    /api/boxes/{id}                 { name }
+ *   PUT    /api/boxes/{id}                 { name, place_id? } — place_id moves the box (and its items) there
  *   DELETE /api/boxes/{id}
  *
  * Items:
  *   GET    /api/boxes/{boxId}/items
  *   POST   /api/boxes/{boxId}/items        { name }
  *   GET    /api/items/{id}
- *   PUT    /api/items/{id}                 { name }
+ *   PUT    /api/items/{id}                 { name, box_id? | place_id? } — moves the item if given (box_id wins if both are)
  *   DELETE /api/items/{id}
  *
  * Box contents (an authenticated JSON view of a box's contents — the box's
@@ -363,6 +363,11 @@ try {
                 }
                 $slug = unique_box_slug($pdo, (int)$box['place_id'], $name, $boxId);
                 $pdo->prepare('UPDATE boxes SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $boxId]);
+                if (isset($body['place_id']) && (int)$body['place_id'] !== (int)$box['place_id']) {
+                    if (move_box_to($pdo, $boxId, $ownerId, (int)$body['place_id']) === null) {
+                        json_error('place_id must be one of your own places', 422);
+                    }
+                }
                 $row = $pdo->query("SELECT * FROM boxes WHERE id = $boxId")->fetch();
                 json_response(['box' => box_out($row)]);
             }
@@ -394,6 +399,15 @@ try {
             }
             $quantity = isset($body['quantity']) ? max(1, (int)$body['quantity']) : (int)$item['quantity'];
             $pdo->prepare('UPDATE items SET name = ?, quantity = ? WHERE id = ?')->execute([$name, $quantity, $itemId]);
+            if (!empty($body['box_id'])) {
+                if (!move_item_to($pdo, $itemId, $ownerId, 'box:' . (int)$body['box_id'])) {
+                    json_error('box_id must be one of your own boxes', 422);
+                }
+            } elseif (!empty($body['place_id'])) {
+                if (!move_item_to($pdo, $itemId, $ownerId, 'place:' . (int)$body['place_id'])) {
+                    json_error('place_id must be one of your own places', 422);
+                }
+            }
             $row = $pdo->query("SELECT * FROM items WHERE id = $itemId")->fetch();
             json_response(['item' => item_out($row)]);
         }

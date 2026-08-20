@@ -344,9 +344,37 @@ thingsfinder/
   assets/style.css     # UI styling
   assets/scan.js       # optional camera barcode scanning (progressive enhancement)
   assets/fonts/        # vendored Liberation Sans TTF, used by the PNG label (SIL OFL license)
+  assets/favicon.svg   # the box mark — source of truth for every icon below
+  assets/apple-touch-icon.png # 180px iOS home-screen icon (cream box on terracotta)
+  assets/icon-192.png    # manifest icon
+  assets/icon-512.png    # manifest icon
+  favicon.ico          # pixel-tuned 16/32/48 bitmaps, at the webroot on purpose
+  site.webmanifest     # app name, colors and icons for "add to home screen"
   data/database.sqlite # created automatically, gitignored
   .htaccess            # Apache routing (alternative to router.php)
 ```
+
+### Icons
+
+The favicon is a flat box mark drawn in the UI's own terracotta
+(`--accent` / `--accent-dark` from `assets/style.css`), matching the 📦 in
+the topbar. `assets/favicon.svg` is the master; modern browsers use it
+directly and scale it to whatever size they need. `favicon.ico` exists
+because browsers request `/favicon.ico` on their own whether you link it or
+not, and its bitmaps are drawn on whole-pixel edges so the mark stays crisp
+at 16px instead of blurring the way a downscaled SVG does. The
+`apple-touch-icon` inverts to a cream box on a solid terracotta square,
+since iOS puts home-screen icons on arbitrary wallpapers and masks the
+corners itself.
+
+All the raster files are regenerated from the SVG — any SVG rasterizer will
+do, e.g. `rsvg-convert -w 192 -h 192 assets/favicon.svg -o assets/icon-192.png`.
+Both routers (`router.php` and `.htaccess`) already serve real files
+straight through, so none of these need a route.
+
+The `<head>` links live in one place — `favicon_tags()` in
+`includes/helpers.php` — so the two page shells in `index.php` (the normal
+app layout and the public `/view/{token}` layout) can't drift apart.
 
 ## Notes / possible extensions
 

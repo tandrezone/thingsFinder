@@ -512,3 +512,130 @@ function find_box_by_token(PDO $pdo, string $token): ?array
     $row = $stmt->fetch();
     return $row ?: null;
 }
+
+/** Every place an owner has, for a destination picker (move item/box, etc). */
+function list_places_for_owner(PDO $pdo, int $ownerId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE owner_id = ? ORDER BY name COLLATE NOCASE');
+    $stmt->execute([$ownerId]);
+    return $stmt->fetchAll();
+}
+
+/** Every box across every one of an owner's places, place name/slug alongside — for the same pickers. */
+function list_boxes_for_owner(PDO $pdo, int $ownerId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT boxes.*, places.name AS place_name, places.slug AS place_slug
+         FROM boxes JOIN places ON places.id = boxes.place_id
+         WHERE places.owner_id = ?
+         ORDER BY places.name COLLATE NOCASE, boxes.name COLLATE NOCASE'
+    );
+    $stmt->execute([$ownerId]);
+    return $stmt->fetchAll();
+}
+
+/**
+ * Every place the owner has, each with its own boxes nested under a
+ * `boxes` key — the shape the move-item and move-box destination pickers
+ * render as a single grouped <select> (one <optgroup> per place).
+ */
+function list_move_destinations(PDO $pdo, int $ownerId): array
+{
+    $places = list_places_for_owner($pdo, $ownerId);
+    $byPlace = [];
+    foreach (list_boxes_for_owner($pdo, $ownerId) as $box) {
+        $byPlace[(int)$box['place_id']][] = $box;
+    }
+    foreach ($places as &$place) {
+        $place['boxes'] = $byPlace[(int)$place['id']] ?? [];
+    }
+    unset($place);
+    return $places;
+}
+
+/**
+ * Moves an item to a different box, or directly into a place (loose, no
+ * box) — $destination is "box:{id}" or "place:{id}", as produced by the
+ * move-item picker. Returns false without changing anything if it doesn't
+ * parse, if $itemId doesn't currently belong to $ownerId, or if the target
+ * box/place doesn't belong to $ownerId either. Both ownership checks
+ * matter: without the destination check, a tampered request could move an
+ * item into someone else's account; without the source check, it could
+ * just as easily pull an item *out* of someone else's account by guessing
+ * its id — items don't carry an owner_id of their own, so this is the only
+ * thing enforcing that boundary.
+ */
+function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination): bool
+{
+    [$type, $rawId] = array_pad(explode(':', $destination, 2), 2, '');
+    $destId = (int)$rawId;
+    if ($destId <= 0 || !in_array($type, ['box', 'place'], true)) {
+        return false;
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT items.id FROM items
+         LEFT JOIN boxes ON boxes.id = items.box_id
+         JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
+         WHERE items.id = ? AND places.owner_id = ?'
+    );
+    $stmt->execute([$itemId, $ownerId]);
+    if (!$stmt->fetchColumn()) {
+        return false;
+    }
+
+    if ($type === 'box') {
+        $stmt = $pdo->prepare(
+            'SELECT boxes.id FROM boxes JOIN places ON places.id = boxes.place_id
+             WHERE boxes.id = ? AND places.owner_id = ?'
+        );
+        $stmt->execute([$destId, $ownerId]);
+        if (!$stmt->fetchColumn()) {
+            return false;
+        }
+        $pdo->prepare('UPDATE items SET box_id = ?, place_id = NULL WHERE id = ?')->execute([$destId, $itemId]);
+        return true;
+    }
+
+    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND owner_id = ?');
+    $stmt->execute([$destId, $ownerId]);
+    if (!$stmt->fetchColumn()) {
+        return false;
+    }
+    $pdo->prepare('UPDATE items SET box_id = NULL, place_id = ? WHERE id = ?')->execute([$destId, $itemId]);
+    return true;
+}
+
+/**
+ * Moves a box — and everything inside it — to a different place owned by
+ * $ownerId. Slugs are only unique *within* a place, so a box named "Tools"
+ * moving into a place that already has a "Tools" box needs a fresh slug;
+ * unique_box_slug() handles that. Returns the box's (possibly new) slug on
+ * success, or null if $boxId doesn't currently belong to $ownerId, or
+ * $newPlaceId isn't one of $ownerId's places. Both checks matter for the
+ * same reason as in move_item_to(): without the source check, a tampered
+ * request could pull a box (and everything in it) out of someone else's
+ * account just by guessing its id.
+ */
+function move_box_to(PDO $pdo, int $boxId, int $ownerId, int $newPlaceId): ?string
+{
+    $stmt = $pdo->prepare(
+        'SELECT boxes.name FROM boxes JOIN places ON places.id = boxes.place_id
+         WHERE boxes.id = ? AND places.owner_id = ?'
+    );
+    $stmt->execute([$boxId, $ownerId]);
+    $name = $stmt->fetchColumn();
+    if ($name === false) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND owner_id = ?');
+    $stmt->execute([$newPlaceId, $ownerId]);
+    if (!$stmt->fetchColumn()) {
+        return null;
+    }
+
+    $slug = unique_box_slug($pdo, $newPlaceId, $name, $boxId);
+    $pdo->prepare('UPDATE boxes SET place_id = ?, slug = ? WHERE id = ?')->execute([$newPlaceId, $slug, $boxId]);
+    return $slug;
+}
