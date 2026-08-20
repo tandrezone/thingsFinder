@@ -103,6 +103,10 @@ function init_schema(PDO $pdo): void
     )");
     migrate_items_table_if_needed($pdo);
 
+    // Must run after boxes/items above have their final columns
+    // (share_token, quantity) so a rebuild here can copy every column across.
+    repair_dangling_fk_references($pdo);
+
     // The barcode → item register: scanning a barcode while adding an item
     // either resolves to a name already known here, or (once the user types
     // a name) creates a new association so the same barcode is recognized
@@ -130,6 +134,23 @@ function migrate_items_table_if_needed(PDO $pdo): void
     $cols = array_column($pdo->query('PRAGMA table_info(items)')->fetchAll(), 'name');
 
     if (!in_array('place_id', $cols, true)) {
+        // legacy_alter_table=ON is what actually matters here: by default,
+        // SQLite's ALTER TABLE RENAME silently rewrites *other* tables' FK
+        // definitions to follow the rename (e.g. a hypothetical
+        // `x.item_id REFERENCES items(id)` would become
+        // `REFERENCES items_old_migration(id)`), and once the renamed table
+        // is dropped a few lines later that reference is left dangling —
+        // see repair_dangling_fk_references() for the fallout when this
+        // happened for the `places` table below. legacy_alter_table turns
+        // that rewrite off, so the rename is "dumb" and only touches this
+        // table. Nothing references `items` today, but this keeps the
+        // pattern symmetric with migrate_places_table_if_needed() so the
+        // same bug doesn't resurface the next time a table gains a FK to
+        // items. foreign_keys is also disabled per SQLite's own recommended
+        // procedure for this kind of rebuild. Neither pragma can be changed
+        // inside a transaction that's already begun.
+        $pdo->exec('PRAGMA foreign_keys = OFF');
+        $pdo->exec('PRAGMA legacy_alter_table = ON');
         $pdo->beginTransaction();
         try {
             $pdo->exec('ALTER TABLE items RENAME TO items_old_migration');
@@ -151,6 +172,9 @@ function migrate_items_table_if_needed(PDO $pdo): void
         } catch (Throwable $e) {
             $pdo->rollBack();
             throw $e;
+        } finally {
+            $pdo->exec('PRAGMA legacy_alter_table = OFF');
+            $pdo->exec('PRAGMA foreign_keys = ON');
         }
     } elseif (!in_array('quantity', $cols, true)) {
         $pdo->exec('ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
@@ -169,6 +193,24 @@ function migrate_places_table_if_needed(PDO $pdo): void
     if (in_array('owner_id', $cols, true)) {
         return;
     }
+    // `places` is a foreign key target for both `boxes.place_id` and
+    // `items.place_id`. By default, SQLite's ALTER TABLE RENAME
+    // automatically rewrites those *other* tables' FK definitions to track
+    // the rename below (e.g. `boxes.place_id REFERENCES places(id)`
+    // silently becomes `REFERENCES "places_old_migration"(id)` in boxes'
+    // own stored schema) — disabling foreign_keys does NOT stop this, only
+    // `PRAGMA legacy_alter_table = ON` does. Once places_old_migration is
+    // dropped a few lines later, that rewritten reference is left dangling,
+    // and every subsequent INSERT/UPDATE/DELETE against boxes or items
+    // fails with "no such table: places_old_migration" the moment SQLite
+    // tries to validate the (now nonexistent) FK target — see
+    // repair_dangling_fk_references() below for repairing a database that
+    // already got left in that state by this bug. foreign_keys is also
+    // disabled here per SQLite's own recommended procedure for this kind of
+    // rebuild. Neither pragma can be changed inside a transaction that's
+    // already begun.
+    $pdo->exec('PRAGMA foreign_keys = OFF');
+    $pdo->exec('PRAGMA legacy_alter_table = ON');
     $pdo->beginTransaction();
     try {
         $pdo->exec('ALTER TABLE places RENAME TO places_old_migration');
@@ -187,6 +229,79 @@ function migrate_places_table_if_needed(PDO $pdo): void
     } catch (Throwable $e) {
         $pdo->rollBack();
         throw $e;
+    } finally {
+        $pdo->exec('PRAGMA legacy_alter_table = OFF');
+        $pdo->exec('PRAGMA foreign_keys = ON');
+    }
+}
+
+/**
+ * Repairs the fallout of the bug fixed above: on a database where
+ * migrate_places_table_if_needed() already ran before legacy_alter_table
+ * was used, `boxes.place_id` and/or `items.place_id` are left referencing
+ * the transient `places_old_migration` table instead of `places`. That
+ * table no longer exists (it was dropped at the end of the migration), so
+ * any write to boxes or items that triggers FK validation fails with
+ * "SQLSTATE[HY000]: General error: 1 no such table: main.places_old_migration".
+ *
+ * This detects that dangling reference from each table's stored schema and
+ * rebuilds the table (same rename-recreate-copy-drop shape as the
+ * migrations above, with legacy_alter_table/foreign_keys handled the same
+ * way) so it points at `places` again. No-op once repaired, which is the
+ * case on every request after the first.
+ */
+function repair_dangling_fk_references(PDO $pdo): void
+{
+    $tables = [
+        'boxes' => "CREATE TABLE boxes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            place_id INTEGER NOT NULL REFERENCES places(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            share_token TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(place_id, slug)
+        )",
+        'items' => "CREATE TABLE items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            box_id INTEGER REFERENCES boxes(id) ON DELETE CASCADE,
+            place_id INTEGER REFERENCES places(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            CHECK ((box_id IS NULL) <> (place_id IS NULL))
+        )",
+    ];
+
+    foreach ($tables as $table => $createSql) {
+        $stmt = $pdo->prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?");
+        $stmt->execute([$table]);
+        $sql = $stmt->fetchColumn();
+        $stmt->closeCursor(); // release sqlite_master before the DDL below touches it
+        if ($sql === false || strpos($sql, '_old_migration') === false) {
+            continue;
+        }
+
+        $tmp = $table . '_fk_repair';
+        $pdo->exec('PRAGMA foreign_keys = OFF');
+        $pdo->exec('PRAGMA legacy_alter_table = ON');
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec("ALTER TABLE $table RENAME TO $tmp");
+            $pdo->exec($createSql);
+            $colStmt = $pdo->query("PRAGMA table_info($tmp)");
+            $cols = implode(', ', array_column($colStmt->fetchAll(), 'name'));
+            $colStmt->closeCursor();
+            $pdo->exec("INSERT INTO $table ($cols) SELECT $cols FROM $tmp");
+            $pdo->exec("DROP TABLE $tmp");
+            $pdo->commit();
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        } finally {
+            $pdo->exec('PRAGMA legacy_alter_table = OFF');
+            $pdo->exec('PRAGMA foreign_keys = ON');
+        }
     }
 }
 
