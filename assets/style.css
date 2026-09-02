@@ -244,7 +244,7 @@ h2::after {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   gap: 0.75rem;
   align-items: start;
 }
@@ -623,14 +623,9 @@ button.danger:hover, .btn.danger:hover { background: var(--danger); color: #fff;
 }
 .btn-ghost:hover { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
 
-@media (max-width: 520px) {
-  .topbar { flex-direction: column; align-items: stretch; }
-  .row-actions { flex-direction: column; align-items: stretch; }
-  .inline-form { flex-direction: column; align-items: stretch; }
-  .card-list { grid-template-columns: 1fr; }
-  .card-head { flex-direction: column; align-items: stretch; gap: 0.35rem; }
-  .card-head > .card-menu > summary { margin-left: auto; }
-}
+/* (The former 520px phone block lived here; it has been folded into the
+   single 639px block at the end of this file so the layout breakpoint and
+   the topbar's label breakpoint can't drift apart again.) */
 
 /* --------------------------------------------------------- accounts/login */
 
@@ -903,4 +898,310 @@ button.danger:hover, .btn.danger:hover { background: var(--danger); color: #fff;
 @media (max-width: 520px) {
   .import-prompt-head { align-items: flex-start; }
   .import-card .import-form { flex-direction: column; align-items: stretch; }
+}
+
+/* =================================================================
+   MOBILE / RESPONSIVE FIXES
+   =================================================================
+   Appended last on purpose: everything here is a correction to a rule
+   defined earlier in this file, so it relies on source order rather
+   than on inflating selector specificity.
+   ================================================================= */
+
+/* ------------------------------------------------------- <select> base
+
+   Selects appear in the item "Move" form and in the people/share forms
+   but never had any base styling, so they rendered as raw platform
+   controls and — because Chrome sizes a <select> to its widest <option>
+   — a long box name would push the whole card wider than the screen.
+   These match the text-input rules and, crucially, let the control
+   shrink inside its flex parent. */
+
+select {
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.95rem;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Text inputs had no max-width either, so a wide `size`/placeholder or a
+   long value could overflow a narrow card. */
+input[type="text"],
+input[type="search"],
+input[type="number"],
+input[type="password"],
+input[type="file"],
+textarea {
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------- search shrinking
+
+   An <input> has an intrinsic min-content width (roughly 20 characters),
+   and as a flex item its default `min-width: auto` honours it — so on a
+   320px screen the search field held its ground and shoved the Search
+   button off the edge instead. */
+
+.search-form,
+.search-wrap { min-width: 0; }
+.search-form input[type="search"] { min-width: 0; }
+
+/* ------------------------------------------------ open card-menu layout
+
+   `details.card-menu` is a flex item of `.card-head`, and its open state
+   contains a rename form (a text input, a number input, a Move select and
+   three buttons). Because the item couldn't wrap, opening the menu let
+   that form's max-content width claim the whole row and squeezed the item
+   title down to roughly one character per line. Letting the open menu take
+   a full-width row of its own fixes it at every breakpoint. */
+
+/* Wrapping is enabled only while a menu is actually open. Left on
+   unconditionally it pushed the closed "\2026" button onto a second line
+   in every card (a long title's max-content base size fills the first
+   line), which made every card taller for no reason. */
+.card-head:has(> .card-menu[open]) { flex-wrap: wrap; }
+.card-head > .card-body { flex: 1 1 auto; min-width: 0; }
+.card-head > .card-menu { flex: 0 0 auto; margin-left: auto; }
+.card-head > .card-menu[open] { flex: 1 1 100%; min-width: 0; }
+.card-head > .card-menu[open] > summary { margin-left: auto; }
+
+/* `min-width: 0` has to be repeated the whole way down. A flex item's
+   default `min-width: auto` refuses to shrink below its min-content width,
+   and the Move <select>'s min-content is the width of its longest option
+   ("(loose in Garden shed behind the greenhouse)") — so without these the
+   longest place name in the account decides how wide every card is. */
+.card-menu-body { min-width: 0; }
+.card-menu-body .inline-form { min-width: 0; }
+/* Cards in the auto-fill grid can be as narrow as 240px, which is not
+   enough for a select and a button side by side — let the row wrap rather
+   than overflow the card. Scoped to the row layout on purpose: the phone
+   block below switches .inline-form to `flex-direction: column`, where
+   `flex-wrap: wrap` would wrap into extra *columns* and spill sideways. */
+@media (min-width: 640px) {
+  .card-menu-body .inline-form { flex-wrap: wrap; }
+}
+.card-menu-body .inline-form > * { min-width: 0; }
+/* No `width: 100%` here — on the tablet-and-up row layout that resolves as
+   a 100% flex-basis and pushes the adjacent Save/Move button off the card.
+   The mobile column layout stretches these to full width on its own. */
+.card-menu-body .inline-form input[type="text"],
+.card-menu-body .inline-form select { flex: 1 1 8rem; min-width: 0; }
+.card-menu-body .inline-form button { flex: 0 0 auto; }
+
+/* The "\00d7 N" quantity pill is a direct child of .card-body, which is a
+   column flex container — so the default `align-items: stretch` blew the
+   pill out to the full card width instead of hugging its label. */
+.qty-badge { align-self: flex-start; }
+
+/* ------------------------------------------------- long-string overflow
+
+   Item names, box slugs and barcodes are user-supplied and frequently
+   arrive as one unbroken string (a scanned EAN, a URL, "PARAFUSO-M6X40-INOX-A2").
+   Without this, the card grid just overflows horizontally on a phone. */
+
+.card-body,
+.card-title,
+.card-head,
+.breadcrumbs,
+.flash,
+.empty-state,
+.meta {
+  overflow-wrap: break-word;
+}
+.card-title { min-width: 0; }
+/* Slugs, URLs and barcodes have no break opportunities at all, so they get
+   the stronger `anywhere`. */
+code { overflow-wrap: anywhere; }
+
+/* `.qr-info .meta { word-break: break-all }` applied to the whole panel,
+   including the sentence above the URL — which is why that paragraph broke
+   as "a read-only pag / e". Only the URL itself needs break-all. */
+.qr-info .meta { word-break: normal; }
+.qr-info .meta code { word-break: break-all; }
+
+/* The scanner overlay is `position: fixed; inset: 0`, which on mobile
+   resolves against the *large* viewport — so the Cancel button ends up
+   underneath the browser's bottom toolbar. 100dvh tracks the visible
+   area instead, and the safe-area padding keeps it clear of the notch
+   and the home indicator. */
+.scanner-overlay {
+  height: 100dvh;
+  overflow-y: auto;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+}
+
+/* Honour the OS "reduce motion" setting — smooth scrolling and the card
+   hover lift are both motion the user may have opted out of. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+  .card:hover { transform: none; }
+}
+
+/* ================================================================
+   Phone layout.
+
+   The single breakpoint used to be 520px, which left 521–639px in a
+   half-broken middle state: the topbar hid its button labels (that
+   switch is at 640px) while still laying everything out in one row.
+   Both now flip at the same place.
+   ================================================================ */
+
+@media (max-width: 639px) {
+
+  /* --- topbar ------------------------------------------------------
+     Previously `flex-direction: column`, which stacked brand, account
+     switcher, Barcodes, search and the account menu as five separate
+     full-width rows — a sticky header eating roughly a third of a
+     phone screen. Instead: keep the icon-sized controls on one row and
+     let only the search field wrap onto a second row. */
+  .topbar {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.6rem 0.9rem;
+    padding-top: max(0.6rem, env(safe-area-inset-top));
+  }
+  .topbar .brand { font-size: 1.05rem; margin-right: auto; }
+  .topbar .search-form {
+    order: 10;
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  /* Dropdowns are anchored to the right edge of their trigger; near the
+     screen edge that used to run off-canvas. */
+  .topbar .card-menu-body {
+    max-width: min(16rem, calc(100vw - 1.8rem));
+  }
+  .context-switcher .card-menu-body {
+    left: auto;
+    right: 0;
+    min-width: 11rem;
+  }
+  .context-switcher > summary { padding: 0.45rem 0.5rem; }
+
+  /* With the labels hidden, the Barcodes link sat in a bordered box next to
+     two borderless icon triggers. Same treatment for all three. */
+  .topbar .topbar-link.btn-ghost {
+    border-color: transparent;
+    background: transparent;
+    padding: 0.45rem 0.5rem;
+  }
+  .topbar .topbar-link.btn-ghost:hover { background: var(--bg); }
+
+  /* --- page gutters ------------------------------------------------
+     1.5rem each side costs ~19% of a 320px screen. */
+  main { padding: 1.25rem 1rem 2.5rem; }
+  footer { padding: 1.5rem 1rem max(2rem, env(safe-area-inset-bottom)); }
+  h1 { font-size: 1.35rem; }
+  h2 { margin-top: 1.75rem; }
+
+  /* --- tap targets -------------------------------------------------
+     Buttons were ~34px tall and the card "⋯" menu 32px square, both
+     under the 44px minimum every mobile accessibility guideline uses. */
+  button, .btn {
+    min-height: 44px;
+    padding: 0.6rem 0.9rem;
+  }
+  .card-menu > summary,
+  .add-card summary,
+  .context-switcher > summary {
+    min-height: 44px;
+  }
+  .card-menu > summary {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* --- form controls -----------------------------------------------
+     iOS Safari force-zooms the page whenever a focused field's text is
+     under 16px, and every input here was 0.95rem (~15px). This is the
+     fix for "the page jumps and stays zoomed after I tap the search
+     box". 16px exactly, not rem, so a changed root size can't undo it. */
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="password"],
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  .import-prompt-text { font-size: 16px; }
+
+  /* Stacked layouts: these already existed at 520px, restated here so
+     they move with the new breakpoint. */
+  .row-actions,
+  .inline-form { flex-direction: column; align-items: stretch; }
+  .card-list { grid-template-columns: minmax(0, 1fr); }
+
+  /* The card head used to stack on mobile, which dropped the overflow-menu
+     button onto its own line below the metadata and left a dead gap in
+     every card. Now that long titles and slugs wrap or ellipsize properly
+     it fits as a row again: title left, 44px menu button right. */
+  .card-head { flex-direction: row; align-items: flex-start; gap: 0.5rem; }
+
+  /* Full-width buttons inside a stacked form read as buttons, not as
+     labels floating left. */
+  .row-actions > button,
+  .row-actions > .btn,
+  .inline-form > button,
+  .card-menu-body > .btn,
+  .card-menu-body form > button { justify-content: center; }
+
+  /* Inside the (now column-stacked) card menu, the 4.2rem quantity field
+     looked like a stray fragment next to the full-width name field. */
+  .card-menu-body .inline-form .qty-input { width: 100%; }
+
+  /* Barcode + quantity rows stay side-by-side (they're deliberately
+     narrow) but must be allowed to shrink rather than overflow. */
+  .barcode-row,
+  .name-qty-row { flex-wrap: wrap; }
+  .barcode-row input[type="text"],
+  .name-qty-row input[type="text"].name-input { flex: 1 1 8rem; }
+  .barcode-row button { flex: 0 0 auto; }
+
+  /* The photo-scan review rows put a name field, a quantity field and
+     two buttons on one line — impossible under ~420px. */
+  .scan-review-list .inline-form { flex-direction: row; flex-wrap: wrap; }
+  .scan-review-list .name-input { flex: 1 1 100%; }
+
+  .photo-scan-card input[type="file"],
+  .import-card .import-form input[type="file"] { max-width: 100%; }
+
+  .import-code { font-size: 0.72rem; }
+  .qr-block, .label-block { padding: 0.9rem; gap: 0.9rem; }
+}
+
+/* Very narrow phones (320–360px): the QR/label side-by-side layouts and
+   the two-up input rows give up and stack completely. */
+@media (max-width: 380px) {
+  main { padding-left: 0.8rem; padding-right: 0.8rem; }
+  .name-qty-row,
+  .barcode-row { flex-direction: column; align-items: stretch; }
+  .name-qty-row input[type="number"].qty-input,
+  .qty-input { width: 100%; }
+  .topbar .brand span:not(.brand-mark) { font-size: 0.95rem; }
+}
+
+/* Landscape phones: the sticky topbar plus its wrapped search row leaves
+   very little room, so the header stops sticking. */
+@media (max-width: 900px) and (max-height: 480px) {
+  .topbar { position: static; }
 }

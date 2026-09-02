@@ -44,7 +44,8 @@ function layout(string $title, string $body, array $breadcrumbs = [], ?array $na
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f5f2">
 <title><?= h($title) ?> · thingsFinder</title>
 <?= favicon_tags() ?>
 <link rel="stylesheet" href="/assets/style.css">
@@ -128,7 +129,8 @@ function layout_public(string $title, string $body): void
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f6f5f2">
 <title><?= h($title) ?> · thingsFinder</title>
 <?= favicon_tags() ?>
 <link rel="stylesheet" href="/assets/style.css">
