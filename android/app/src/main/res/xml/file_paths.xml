@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Temporary photos for OCR and generated label PNGs; both are deleted/overwritten, never kept. -->
+    <cache-path name="shared" path="shared/" />
+</paths>

@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">thingsFinder</string>
+
+    <!-- Navigation -->
+    <string name="nav_places">Places</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_barcodes">Barcodes</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Common actions -->
+    <string name="action_add">Add</string>
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_move">Move</string>
+    <string name="action_remove">Remove</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_review">Review</string>
+    <string name="action_save">Save</string>
+    <string name="action_scan">Scan</string>
+    <string name="action_share">Share</string>
+
+    <!-- Errors -->
+    <string name="error_loading">Couldn\'t load this. Try again.</string>
+    <string name="error_generic">Something went wrong — nothing was changed.</string>
+
+    <!-- Places -->
+    <string name="places_title">Places</string>
+    <string name="places_subtitle">Everything you own, findable in seconds.</string>
+    <string name="places_empty">No places yet.</string>
+    <string name="places_empty_hint">Add your first place (e.g. \"Garage\", \"Attic\", \"Kitchen\").</string>
+    <string name="action_add_place">Add a place</string>
+    <string name="action_scan_box">Scan a box label</string>
+    <string name="field_place_name">Place name</string>
+    <string name="field_place_name_hint">e.g. Garage</string>
+    <string name="rename_place_title">Rename place</string>
+    <string name="delete_place_title">Delete \"%1$s\"?</string>
+    <string name="delete_place_text">This deletes the place and every box and item inside it.</string>
+    <string name="action_delete_place">Delete place</string>
+    <string name="place_not_found">That place no longer exists.</string>
+    <string name="cd_manage_place">Manage %1$s</string>
+    <string name="msg_place_created">Place \"%1$s\" created.</string>
+    <string name="msg_place_renamed">Place renamed.</string>
+    <string name="msg_place_deleted">Place deleted.</string>
+    <string name="msg_place_name_empty">Place name cannot be empty.</string>
+
+    <!-- Boxes -->
+    <string name="boxes_title">Boxes</string>
+    <string name="boxes_empty">No boxes here yet.</string>
+    <string name="action_add_box">Add a box</string>
+    <string name="field_box_name">Box name</string>
+    <string name="field_box_name_hint">e.g. Tools bin 2</string>
+    <string name="rename_box_title">Rename box</string>
+    <string name="move_box_title">Move box to…</string>
+    <string name="delete_box_title">Delete \"%1$s\"?</string>
+    <string name="delete_box_text">This deletes the box and all its items.</string>
+    <string name="action_delete_box">Delete box</string>
+    <string name="box_not_found">That box no longer exists.</string>
+    <string name="box_in_place">Box in %1$s</string>
+    <string name="box_empty">This box is empty.</string>
+    <string name="cd_manage_box">Manage %1$s</string>
+    <string name="cd_box_qr">QR code for %1$s</string>
+    <string name="qr_explainer">Scan this with thingsFinder (or the phone camera) to jump straight to this box. Print it as a label and stick it on the box.</string>
+    <string name="action_share_label">Share label</string>
+    <string name="action_share_qr">Share QR</string>
+    <string name="msg_box_created">Box \"%1$s\" created.</string>
+    <string name="msg_box_renamed">Box renamed.</string>
+    <string name="msg_box_moved">Box moved.</string>
+    <string name="msg_box_move_failed">Couldn\'t move that box — pick a valid place.</string>
+    <string name="msg_box_deleted">Box deleted.</string>
+    <string name="msg_box_name_empty">Box name cannot be empty.</string>
+    <string name="msg_box_link_unknown">No box on this phone matches that label.</string>
+    <string name="msg_not_a_box_code">That isn\'t a thingsFinder box label.</string>
+
+    <!-- Items -->
+    <string name="items_title">Items</string>
+    <string name="items_empty">No items here yet.</string>
+    <string name="place_items_note">Items below are loose in %1$s itself, not inside any box.</string>
+    <string name="action_add_item">Add item</string>
+    <string name="add_item_title">Add an item</string>
+    <string name="edit_item_title">Edit item</string>
+    <string name="field_item_name">Item name</string>
+    <string name="field_item_name_hint">e.g. Hot glue gun</string>
+    <string name="field_quantity">Qty</string>
+    <string name="field_barcode">Barcode</string>
+    <string name="field_barcode_hint">Scan or type</string>
+    <string name="barcode_help">Optional. Scan or type a barcode and thingsFinder fills in the name it remembers.</string>
+    <string name="barcode_looking">Looking up this barcode…</string>
+    <string name="barcode_registered">Registered barcode — the name comes from your barcode register.</string>
+    <string name="barcode_suggested">Suggested by %1$s — check the name, then tap Add to save it.</string>
+    <string name="barcode_unknown">Not registered yet — type a name and thingsFinder will remember it.</string>
+    <string name="move_item_title">Move item to…</string>
+    <string name="move_loose_in">(loose in %1$s)</string>
+    <string name="delete_item_title">Delete \"%1$s\"?</string>
+    <string name="delete_item_text">This item will be removed.</string>
+    <string name="cd_manage_item">Manage %1$s</string>
+    <string name="qty_badge">×%1$d</string>
+    <string name="msg_item_added">Item \"%1$s\" added.</string>
+    <string name="msg_item_added_recognized">Recognized barcode — added \"%1$s\".</string>
+    <string name="msg_item_added_remembered">Item \"%1$s\" added — barcode remembered for next time.</string>
+    <string name="msg_barcode_needs_name">That barcode isn\'t registered yet — type an item name so thingsFinder remembers it.</string>
+    <string name="msg_item_name_empty">Item name cannot be empty.</string>
+    <string name="msg_item_updated">Item updated.</string>
+    <string name="msg_item_moved">Item moved.</string>
+    <string name="msg_item_move_failed">Couldn\'t move that item — pick a valid destination.</string>
+    <string name="msg_item_deleted">Item deleted.</string>
+    <string name="msg_items_added">Added %1$d item(s).</string>
+    <string name="msg_items_added_skipped">Added %1$d item(s). Skipped %2$d bad entr(ies).</string>
+
+    <!-- Bulk add: photo + JSON -->
+    <string name="bulk_add_title">More ways to add</string>
+    <string name="action_from_photo">From a photo</string>
+    <string name="action_import_json">Import JSON</string>
+    <string name="ocr_reading">Reading…</string>
+    <string name="photo_title">Add items from a photo</string>
+    <string name="photo_explainer">Take or choose a photo of a printed or handwritten list (not of the items themselves). The text is read on this phone and you review it before anything is added.</string>
+    <string name="action_take_photo">Take a photo</string>
+    <string name="action_choose_photo">Choose from gallery</string>
+    <string name="msg_ocr_found">Found %1$d line(s) — review them, then add what looks right.</string>
+    <string name="msg_ocr_nothing_found">Couldn\'t find any readable text — try a clearer, well-lit, straight-on shot of the list.</string>
+    <string name="msg_ocr_failed">Couldn\'t read that photo.</string>
+    <string name="import_title">Import items from JSON</string>
+    <string name="import_steps">1. Copy the prompt below into ChatGPT, Claude, Gemini — whichever you use — and attach a photo of your stuff.\n2. Save its reply as a .json file.\n3. Choose that file here and every item lands in %1$s (you\'ll review them first).</string>
+    <string name="import_format">An array of objects: \"name\" is required, \"quantity\" is an optional integer (default 1). Up to %1$d items per file. {\"items\": […]} works too.</string>
+    <string name="action_copy_prompt">Copy prompt</string>
+    <string name="action_copied">Copied</string>
+    <string name="action_share_prompt">Share prompt</string>
+    <string name="action_choose_json">Choose JSON file</string>
+    <string name="msg_import_none">No items imported — that file had no usable entries.</string>
+    <string name="msg_import_none_reason">No items imported — %1$s</string>
+    <string name="msg_file_unreadable">Couldn\'t read that file (max 2 MB).</string>
+
+    <!-- Review -->
+    <string name="review_title_photo">Review items from photo</string>
+    <string name="review_title_json">Review imported items</string>
+    <string name="review_help">Edit or remove lines, then add whatever\'s left.</string>
+    <string name="review_pending">%1$d item(s) waiting for review</string>
+    <string name="review_skipped">Skipped %1$d bad entr(ies): %2$s</string>
+    <string name="review_edit_line">Edit line</string>
+    <string name="review_discard_title">Discard these items?</string>
+    <string name="review_discard_text">Nothing has been added yet; the whole list will be thrown away.</string>
+    <string name="action_discard_all">Discard all</string>
+    <string name="cd_edit_line">Edit %1$s</string>
+    <string name="cd_remove_line">Remove %1$s</string>
+
+    <!-- Search -->
+    <string name="search_title">Search</string>
+    <string name="search_hint">Search for an item…</string>
+    <string name="search_empty_query">Type something above to search across every place and box.</string>
+    <string name="search_no_results">No items matching \"%1$s\" were found.</string>
+    <string name="search_in">in %1$s</string>
+
+    <!-- Barcodes -->
+    <string name="barcodes_title">Barcodes</string>
+    <string name="barcodes_subtitle">Scan a barcode once while adding an item, and thingsFinder remembers what it is from then on.</string>
+    <string name="barcodes_empty">No barcodes registered yet.</string>
+    <string name="barcodes_empty_hint">Scan one while adding an item, or add one here.</string>
+    <string name="action_add_barcode">Add a barcode</string>
+    <string name="rename_barcode_title">Rename barcode item</string>
+    <string name="delete_barcode_title">Remove this barcode?</string>
+    <string name="delete_barcode_text">The barcode will need to be scanned and named again to relearn it.</string>
+    <string name="cd_manage_barcode">Manage %1$s</string>
+    <string name="msg_barcode_linked">Barcode linked to \"%1$s\".</string>
+    <string name="msg_barcode_both_required">A barcode and an item name are both required.</string>
+    <string name="msg_barcode_updated">Barcode updated.</string>
+    <string name="msg_barcode_removed">Barcode removed.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_lookup_title">Look up unknown barcodes online</string>
+    <string name="settings_lookup_text">Asks Open Food Facts and UPCitemdb for a name suggestion when you scan a barcode that isn\'t in your register. Only the barcode number is sent — nothing about your inventory.</string>
+    <string name="settings_backup_title">Backup</string>
+    <string name="settings_backup_text">Everything is stored only on this phone. Export a backup file now and then (to Drive, a computer, …) so a lost phone doesn\'t mean lost data.</string>
+    <string name="action_export_backup">Export backup</string>
+    <string name="action_restore_backup">Restore from backup</string>
+    <string name="restore_confirm_title">Replace everything on this phone?</string>
+    <string name="restore_confirm_text">The backup has %1$d place(s), %2$d box(es) and %3$d item(s). Everything currently on this phone will be replaced. This can\'t be undone.</string>
+    <string name="action_replace_everything">Replace everything</string>
+    <string name="msg_backup_exported">Backup exported.</string>
+    <string name="msg_backup_invalid">That file isn\'t a thingsFinder backup.</string>
+    <string name="msg_backup_restored">Restored %1$d place(s), %2$d box(es), %3$d item(s).</string>
+    <string name="msg_backup_failed">Backup failed — nothing was changed.</string>
+    <string name="settings_about_title">About</string>
+    <string name="settings_about_text">thingsFinder %1$s for Android. Your data never leaves this phone unless you export it.</string>
+
+    <plurals name="box_count">
+        <item quantity="one">%1$d box</item>
+        <item quantity="other">%1$d boxes</item>
+    </plurals>
+    <plurals name="item_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
+    <plurals name="search_result_count">
+        <item quantity="one">%1$d result</item>
+        <item quantity="other">%1$d results</item>
+    </plurals>
+    <plurals name="action_add_n_items">
+        <item quantity="one">Add %1$d item</item>
+        <item quantity="other">Add %1$d items</item>
+    </plurals>
+</resources>

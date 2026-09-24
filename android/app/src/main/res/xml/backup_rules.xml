@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and lower: include the inventory database and settings in Google auto-backup. -->
+<full-backup-content>
+    <include domain="database" path="thingsfinder.db" />
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="datastore/" />
+    <exclude domain="cache" path="." />
+</full-backup-content>
