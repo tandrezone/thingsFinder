@@ -173,8 +173,7 @@
     <string name="settings_title">Settings</string>
     <string name="settings_lookup_title">Look up unknown barcodes online</string>
     <string name="settings_lookup_text">Asks Open Food Facts and UPCitemdb for a name suggestion when you scan a barcode that isn\'t in your register. Only the barcode number is sent — nothing about your inventory.</string>
-    <string name="settings_backup_title">Backup</string>
-    <string name="settings_backup_text">Everything is stored only on this phone. Export a backup file now and then (to Drive, a computer, …) so a lost phone doesn\'t mean lost data.</string>
+    <string name="settings_backup_text">Or as a readable JSON backup (the same shape the web app uses):</string>
     <string name="action_export_backup">Export backup</string>
     <string name="action_restore_backup">Restore from backup</string>
     <string name="restore_confirm_title">Replace everything on this phone?</string>
@@ -185,7 +184,50 @@
     <string name="msg_backup_restored">Restored %1$d place(s), %2$d box(es), %3$d item(s).</string>
     <string name="msg_backup_failed">Backup failed — nothing was changed.</string>
     <string name="settings_about_title">About</string>
-    <string name="settings_about_text">thingsFinder %1$s for Android. Your data never leaves this phone unless you export it.</string>
+    <string name="settings_about_text">thingsFinder %1$s for Android. Your data lives on this phone; it only leaves it through cloud sync (when signed in) or a file you export.</string>
+
+    <!-- Cloud sync -->
+    <string name="cloud_sync_title">Sync to cloud</string>
+    <string name="cloud_sync_text">Keeps this phone and your account on %1$s in step — changes made on either side show up on the other.</string>
+    <string name="cloud_not_signed_in">Sign in to your %1$s account to start syncing. Until then everything stays only on this phone.</string>
+    <string name="cloud_sign_in">Sign in</string>
+    <string name="cloud_sign_in_title">Sign in to sync</string>
+    <string name="cloud_sign_in_text">Use the same username and password as the thingsFinder website. Your password is only sent to the server once; the phone keeps a revocable token instead.</string>
+    <string name="cloud_signed_in_as">Signed in as %1$s on %2$s</string>
+    <string name="cloud_signed_in">Signed in as %1$s — syncing…</string>
+    <string name="cloud_sign_out">Sign out</string>
+    <string name="cloud_sign_out_title">Sign out of cloud sync?</string>
+    <string name="cloud_sign_out_text">Everything stays on this phone and in the cloud; they just stop syncing until you sign in again.</string>
+    <string name="cloud_signed_out">Signed out. Your data is still on this phone.</string>
+    <string name="cloud_sync_now">Sync now</string>
+    <string name="cloud_syncing">Syncing…</string>
+    <string name="cloud_last_synced">Last synced %1$s</string>
+    <string name="cloud_never_synced">Not synced yet.</string>
+    <string name="cloud_synced">Synced — sent %1$d change(s), received %2$d.</string>
+    <string name="cloud_error_server_url">Enter an https:// server address, e.g. thingsfinder.xyz.</string>
+    <string name="cloud_error_credentials_missing">Enter your username and password.</string>
+    <string name="cloud_error_wrong_password">Wrong username or password.</string>
+    <string name="cloud_error_unreachable">Couldn\'t reach %1$s. Check your connection and try again.</string>
+    <string name="cloud_error_no_sync_api">That server doesn\'t support sync yet — it needs the updated thingsFinder server code.</string>
+    <string name="cloud_error_http">Server error (%1$d): %2$s</string>
+    <string name="cloud_error_signed_out">The server signed this phone out. Sign in again to keep syncing.</string>
+    <string name="cloud_error_sync_failed">Sync failed: %1$s</string>
+    <string name="field_server">Server</string>
+    <string name="field_username">Username</string>
+    <string name="field_password">Password</string>
+    <string name="cd_show_password">Show password</string>
+    <string name="cd_hide_password">Hide password</string>
+
+    <!-- SQLite database export / import -->
+    <string name="settings_database_title">Database file</string>
+    <string name="settings_database_text">Export the whole database as a .sqlite file (opens in any SQLite browser), or replace everything on this phone with one exported before.</string>
+    <string name="action_export_database">Export database (.sqlite)</string>
+    <string name="action_import_database">Import database</string>
+    <string name="db_import_confirm_title">Replace everything on this phone?</string>
+    <string name="db_import_confirm_text">That database has %1$d place(s), %2$d box(es) and %3$d item(s). Everything currently on this phone will be replaced and the app will restart. With cloud sync on, anything in your cloud account that isn\'t in the file will come back on the next sync.</string>
+    <string name="action_replace_and_restart">Replace and restart</string>
+    <string name="msg_db_exported">Database exported.</string>
+    <string name="msg_db_import_invalid">Can\'t import: %1$s</string>
 
     <plurals name="box_count">
         <item quantity="one">%1$d box</item>

@@ -121,6 +121,11 @@ function init_schema(PDO $pdo): void
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_box ON items(box_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_place ON items(place_id)");
     $pdo->exec("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name)");
+
+    // Sync support for the Android app (api_tokens, uuid/updated_at columns,
+    // tombstones) — see includes/sync.php. Idempotent, like everything above.
+    require_once __DIR__ . '/sync.php';
+    init_sync_schema($pdo);
 }
 
 /**

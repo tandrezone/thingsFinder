@@ -327,6 +327,26 @@ curl -b cookies.txt -X POST localhost:8000/api/places -d '{"name":"Garage"}'
 curl -b cookies.txt "localhost:8000/api/search?q=glue"
 ```
 
+### Android app: token login and sync
+
+The Android app (in `android/`) talks to these routes with a bearer token
+instead of the session cookie. Every route above also accepts
+`Authorization: Bearer <token>`.
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| POST | `/api/auth/login` | `{"username","password","device_name"}` | Returns `{"token","user"}` (201); 401 on a wrong password |
+| POST | `/api/auth/logout` | | Revokes the token used for the call |
+| GET | `/api/me` | | The token's user |
+| POST | `/api/sync` | `{"since", "places", "boxes", "items", "deleted", "barcodes"}` | Applies the phone's changes (last write wins per row, by `updated_at`) and returns `{"server_time", "changes", "skipped"}` — everything changed on the server since `since` |
+
+Rows are matched by a `uuid` column; `updated_at` decides conflicts and
+`changed_at` (server write time) is the sync cursor. Both, plus tombstones for
+deletes, are maintained by SQLite triggers, so edits made in the web UI reach
+the phone too. Tokens are stored as SHA-256 hashes in `api_tokens` and expire
+after a year. See `includes/sync.php`; `tests/sync_smoke.sh` exercises it all
+against `php -S`.
+
 ## Data model
 
 ```
@@ -336,7 +356,12 @@ places        (id, owner_id, name, slug)               -- slug unique within its
 boxes         (id, place_id, name, slug, share_token)  -- slug unique within its place; share_token is the public /view/ link
 items         (id, box_id, place_id, name, quantity)   -- exactly one of box_id/place_id is set
 barcode_items (barcode, name)                          -- barcode is the primary key; shared across all accounts
+api_tokens    (id, user_id, token_hash, device_name, created_at, last_used_at, expires_at)  -- Android app logins
+sync_tombstones (id, kind, uuid, deleted_at)           -- deleted rows, so deletes reach the phone
 ```
+
+`places`, `boxes` and `items` also carry `uuid`, `updated_at` and `changed_at`
+for the Android sync (added automatically to existing databases).
 
 An item lives either in a box or directly in a place — never both, never
 neither (enforced by a `CHECK` constraint). A `shares` row grants `user_id`

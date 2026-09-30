@@ -21,8 +21,25 @@ function ensure_session_started(): void
     }
 }
 
+/**
+ * Set for the length of one API request when it authenticated with a bearer
+ * token (the Android app) instead of the session cookie. Token requests
+ * never start a PHP session and always act on the token owner's own data.
+ */
+function api_token_user_id(?int $set = null, bool $assign = false): ?int
+{
+    static $userId = null;
+    if ($assign) {
+        $userId = $set;
+    }
+    return $userId;
+}
+
 function current_user_id(): ?int
 {
+    if (api_token_user_id() !== null) {
+        return api_token_user_id();
+    }
     ensure_session_started();
     return isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
 }
@@ -61,9 +78,21 @@ function require_login(): void
     }
 }
 
-/** Same idea as require_login(), for api.php — a 401 instead of a redirect. */
-function require_login_api(): void
+/**
+ * Same idea as require_login(), for api.php — a 401 instead of a redirect.
+ * Accepts either the web session cookie or an app bearer token.
+ */
+function require_login_api(?PDO $pdo = null): void
 {
+    $token = request_bearer_token();
+    if ($token !== null) {
+        $userId = $pdo ? find_api_token_user($pdo, $token) : null;
+        if ($userId === null || find_user_by_id($pdo, $userId) === null) {
+            json_error('Invalid or expired token — sign in again', 401);
+        }
+        api_token_user_id($userId, true);
+        return;
+    }
     if (current_user_id() === null) {
         json_error('Login required', 401);
     }
@@ -77,6 +106,9 @@ function require_login_api(): void
  */
 function active_owner_id(PDO $pdo): int
 {
+    if (api_token_user_id() !== null) {
+        return api_token_user_id(); // app tokens only ever see their own account
+    }
     ensure_session_started();
     $userId = current_user_id();
     $chosen = isset($_SESSION['active_owner_id']) ? (int)$_SESSION['active_owner_id'] : $userId;

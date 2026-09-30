@@ -132,3 +132,42 @@ data class SearchRow(
     @ColumnInfo(name = "place_id") val placeId: Long,
     @ColumnInfo(name = "place_name") val placeName: String,
 )
+
+/**
+ * A row deleted on this phone, waiting to be sent to the cloud (so the
+ * delete reaches the server and other devices). Only the top-level row is
+ * recorded — deleting a place on the server cascades to its boxes and items
+ * there too. Removed once a sync has delivered it.
+ */
+@Entity(tableName = "sync_tombstones")
+data class TombstoneEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val kind: String,
+    val uuid: String,
+    @ColumnInfo(name = "deleted_at") val deletedAt: Long,
+) {
+    companion object {
+        // Same names as the server's tables, so they go over the wire as-is.
+        const val PLACES = "places"
+        const val BOXES = "boxes"
+        const val ITEMS = "items"
+    }
+}
+
+/** An item with its parent's uuid, for building a sync request. */
+data class ItemSyncRow(
+    val uuid: String,
+    val name: String,
+    val quantity: Int,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "box_uuid") val boxUuid: String?,
+    @ColumnInfo(name = "place_uuid") val placeUuid: String?,
+)
+
+data class BoxSyncRow(
+    val uuid: String,
+    val name: String,
+    @ColumnInfo(name = "share_token") val shareToken: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    @ColumnInfo(name = "place_uuid") val placeUuid: String,
+)

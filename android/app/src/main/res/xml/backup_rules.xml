@@ -4,5 +4,6 @@
     <include domain="database" path="thingsfinder.db" />
     <include domain="sharedpref" path="." />
     <include domain="file" path="datastore/" />
-    <exclude domain="cache" path="." />
+    <!-- The cloud sign-in token must never be copied into a backup or onto another device. -->
+    <exclude domain="file" path="datastore/cloud.preferences_pb" />
 </full-backup-content>

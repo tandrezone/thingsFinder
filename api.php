@@ -49,7 +49,18 @@
  *
  * Search (within the active account's own data only):
  *   GET    /api/search?q=glue
+ *
+ * Android app (bearer-token auth, see includes/sync.php) — every route above
+ * also accepts `Authorization: Bearer <token>` instead of the session cookie:
+ *   POST   /api/auth/login                 { username, password, device_name? } -> { token, user }
+ *   POST   /api/auth/logout                revokes the token used for the call
+ *   GET    /api/me                         -> { user }
+ *   POST   /api/sync                       { since, places, boxes, items, deleted, barcodes }
+ *                                          -> { server_time, changes, skipped }
  */
+
+// Never let a PHP warning or notice leak into (and corrupt) a JSON response.
+ini_set('display_errors', '0');
 
 require_once __DIR__ . '/includes/db.php';
 require_once __DIR__ . '/includes/helpers.php';
@@ -62,7 +73,28 @@ $segments = path_segments($path); // e.g. ['api','places','3','boxes']
 
 array_shift($segments); // drop 'api'
 
-require_login_api();
+// ---- /api/auth/login — the only route that needs no credentials -----------
+if ($segments === ['auth', 'login']) {
+    if ($method !== 'POST') {
+        json_error('Method not allowed', 405);
+    }
+    $body = read_body();
+    $username = is_string($body['username'] ?? null) ? trim($body['username']) : '';
+    $password = is_string($body['password'] ?? null) ? $body['password'] : '';
+    if ($username === '' || $password === '') {
+        json_error('username and password are required', 400);
+    }
+    $user = find_user_by_username($pdo, $username);
+    if (!$user || !password_verify($password, $user['password_hash'])) {
+        usleep(400000); // slow down password guessing a little
+        json_error('Wrong username or password', 401);
+    }
+    $device = is_string($body['device_name'] ?? null) ? trim($body['device_name']) : 'Android';
+    $token = create_api_token($pdo, (int)$user['id'], $device !== '' ? $device : 'Android');
+    json_response(['token' => $token, 'user' => ['id' => (int)$user['id'], 'username' => $user['username']]], 201);
+}
+
+require_login_api($pdo);
 $ownerId = active_owner_id($pdo);
 
 /** Call before any create/update/delete — view-only shares get a 403. */
@@ -144,6 +176,29 @@ function api_find_item(PDO $pdo, int $itemId, int $ownerId): ?array
 }
 
 try {
+    // ---- /api/auth/logout, /api/me, /api/sync (Android app) -------------
+    if ($segments === ['auth', 'logout']) {
+        if ($method !== 'POST') {
+            json_error('Method not allowed', 405);
+        }
+        $token = request_bearer_token();
+        if ($token !== null) {
+            delete_api_token($pdo, $token);
+        }
+        json_response(['logged_out' => true]);
+    }
+    if ($segments === ['me']) {
+        $me = find_user_by_id($pdo, current_user_id());
+        json_response(['user' => ['id' => (int)$me['id'], 'username' => $me['username']]]);
+    }
+    if ($segments === ['sync']) {
+        if ($method !== 'POST') {
+            json_error('Method not allowed', 405);
+        }
+        // Sync always works on the caller's *own* account — never on a shared one.
+        json_response(sync_apply($pdo, (int)current_user_id(), read_body()));
+    }
+
     // ---- /api/search --------------------------------------------------
     if ($segments === ['search']) {
         if ($method !== 'GET') {
@@ -491,5 +546,7 @@ try {
 
     json_error('Not found', 404);
 } catch (Throwable $e) {
-    json_error('Server error: ' . $e->getMessage(), 500);
+    // Log the detail for the admin; never send SQL or file paths to the client.
+    error_log('thingsFinder API error: ' . $e);
+    json_error('Server error', 500);
 }
