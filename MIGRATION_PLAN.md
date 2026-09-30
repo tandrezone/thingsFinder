@@ -44,7 +44,9 @@ Status legend: **done** · **partial** · **deferred** · **n/a** (does not appl
 | `/setup`, `/login`, `/logout` | Accounts | public | users | — | — | n/a (single-user device, data never leaves phone) |
 | `/people` (sharing), `/switch-context` | Sharing | login | shares | — | — | deferred (needs server sync) |
 | `/account` change password | Account | login | users | — | — | n/a |
-| — (new) backup to / restore from file | Safety net | — | all | — | **Settings** → Export / Import backup | done (new; stop-gap until API backup) |
+| — (new) backup to / restore from file | Safety net | — | all | — | **Settings** → JSON backup | done |
+| — (new) export / import the SQLite file | Safety net / move phones | — | all | — | **Settings** → Database file | done |
+| — (new) cloud sync | Phone ↔ web | token | all + api_tokens, sync_tombstones | POST /api/auth/login, /api/auth/logout, GET /api/me, POST /api/sync | **Settings** → Cloud sync (on by default) | done |
 | — (new) settings | Lookup toggle | — | DataStore | — | **Settings** | done |
 
 ## 3. Data model
@@ -144,14 +146,30 @@ Security issues found in the existing PHP (not modified — listed for follow-up
 5. Session cookie flags (`HttpOnly`, `SameSite`, `Secure`) should be checked
    in `includes/auth.php` if exposed beyond a LAN.
 
-## 7. Future: backup API (outline, not built)
+## 7. Cloud sync (built)
 
-- `POST /api/auth/token` (username/password → bearer token; store SHA-256 hash
-  in `api_tokens(id, user_id, token_hash, created_at, expires_at, last_used_at, device_name)`),
-  `DELETE /api/auth/token`.
-- `PUT /api/backup` — upload the same JSON document the app's "Export
-  backup" writes (`format: "thingsfinder-backup", version: 1`).
-- `GET /api/backup` — latest backup for restore.
-- Later, row-level sync keyed on `uuid` + `updated_at`.
-- Android side: add Retrofit + an `AuthInterceptor`, token in DataStore
-  (Keystore-encrypted), and a WorkManager job for periodic backup.
+Server (`includes/sync.php`, wired in from `includes/db.php`, `includes/auth.php`, `api.php`, `.htaccess`):
+
+- `api_tokens(user_id, token_hash SHA-256, device_name, expires_at +365 d, last_used_at)`.
+  `POST /api/auth/login` returns a 64-hex token; every `/api/*` route accepts
+  `Authorization: Bearer …` as well as the session cookie. Token requests never
+  start a PHP session and only see the token owner's own data.
+- `places/boxes/items` gain `uuid`, `updated_at` (conflict clock) and `changed_at`
+  (server write time = sync cursor). SQLite triggers fill them for web-UI writes
+  and record deletes in `sync_tombstones`, so `index.php` needed no changes.
+  Existing databases are migrated in place on the first request.
+- `POST /api/sync {since, places, boxes, items, deleted, barcodes}` applies the
+  phone's rows (last write wins by `updated_at`, ownership checked per row, a
+  uuid owned by another account is refused), then returns everything with
+  `changed_at > since` plus tombstones and the barcode register.
+- Also fixed while there: `api.php` no longer returns exception text to clients
+  and never prints PHP warnings into JSON.
+- Test: `tests/sync_smoke.sh` (37 curl checks against `php -S`).
+
+Android: `sync/` package — Room v2 adds `sync_tombstones`; SyncEngine pushes rows
+with `updated_at > lastPushAt`, applies pulled rows with the same LWW rule;
+WorkManager runs it after local edits, at start and hourly.
+
+Deploy: copy `includes/sync.php` and the changed `api.php`, `includes/auth.php`,
+`includes/db.php`, `.htaccess` to the server. The schema upgrades itself.
+Apache needs `mod_setenvif` (usually on) for the Authorization header.

@@ -13,6 +13,8 @@ cd android
 | `lookup/OpenBarcodeLookupTest` | Open Food Facts → UPCitemdb fallback, 5xx, malformed JSON, timeouts, no request for blank input (MockWebServer) | JVM only |
 | `data/InventoryRepositoryTest` | slug de-dup, box move re-slug, barcode "known wins", item moves, cascade delete, search escaping, lookup toggle | Robolectric + in-memory Room |
 | `data/BackupRepositoryTest` | export → restore round trip (share tokens kept), rejecting a non-backup file | Robolectric + in-memory Room |
+| `sync/SyncEngineTest` | first/incremental push, tombstones sent then cleared (kept on failure), LWW on pull, server deletes, skipped rows retried, refused delete → full pull, 401 signs out | Robolectric + in-memory Room |
+| `sync/OkHttpCloudApiTest` | login/sync wire format (snake_case, bearer header, nulls omitted), 401/404/HTML/disconnect mapping, server URL normalisation | JVM only (MockWebServer) |
 | `ui/ViewModelTests` | Loading → Content / NotFound, Deleted event, add-item message, barcode Looking → Suggested, JSON review → add, OCR merge, search + SavedStateHandle | Robolectric + in-memory Room |
 
 `@Preview`s for every key screen (phone + tablet, light + dark, and the
@@ -62,6 +64,22 @@ tablet or foldable profile.
 **Backup**
 - [ ] *Export backup* to Downloads/Drive; add an item; *Restore from backup* → confirm → the extra item is gone, everything else is back; QR labels printed before still open their boxes.
 - [ ] Restore a random `.json` → "That file isn't a thingsFinder backup.", nothing changes.
+
+**Cloud sync** (needs the updated server code deployed)
+- [ ] Fresh install: Settings shows *Sync to cloud* **on**, "Sign in to your thingsfinder.xyz account…".
+- [ ] Wrong password → inline error, dialog stays open with the username kept. Airplane mode → "Couldn't reach thingsfinder.xyz".
+- [ ] Sign in → "Syncing…" then "Last synced just now"; the phone's places appear on the website.
+- [ ] Add an item on the phone, wait ~20 s (or *Sync now*) → it's on the website. Rename a place on the website → *Sync now* → renamed on the phone.
+- [ ] Delete a box on the website → gone from the phone after a sync; delete an item on the phone → gone from the website.
+- [ ] Airplane mode, make edits, turn network back on → they sync by themselves within a minute or so.
+- [ ] Revoke the token (delete the row in `api_tokens` on the server) → next sync shows "signed out", sign in again works.
+- [ ] Toggle *Sync to cloud* off → no requests (check the server log); back on → syncs.
+- [ ] Sign out → data stays on the phone; sign in again → no duplicates.
+
+**Database file**
+- [ ] *Export database* → a `.sqlite` file that opens in DB Browser for SQLite with places/boxes/items.
+- [ ] Add something, then *Import database* with that file → confirmation with counts → app restarts showing the file's contents.
+- [ ] Import a random file / a JSON file / the server's `data/database.sqlite` → clear refusal, nothing changes.
 
 **Platform behaviour**
 - [ ] Rotation mid-form (add-item sheet, rename dialog, add-place dialog): typed text is kept.

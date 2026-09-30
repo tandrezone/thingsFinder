@@ -51,6 +51,16 @@ interface PlaceDao {
 
     @Query("DELETE FROM places")
     suspend fun deleteAll()
+
+    // ---- sync ----
+    @Query("SELECT * FROM places WHERE updated_at > :since")
+    suspend fun changedSince(since: Long): List<PlaceEntity>
+
+    @Query("SELECT * FROM places WHERE uuid = :uuid")
+    suspend fun findByUuid(uuid: String): PlaceEntity?
+
+    @Query("DELETE FROM places WHERE uuid = :uuid AND updated_at <= :deletedAt")
+    suspend fun deleteByUuidIfOlder(uuid: String, deletedAt: Long): Int
 }
 
 @Dao
@@ -104,6 +114,24 @@ interface BoxDao {
 
     @Query("DELETE FROM boxes WHERE id = :id")
     suspend fun delete(id: Long)
+
+    // ---- sync ----
+    @Query(
+        """
+        SELECT boxes.uuid, boxes.name, boxes.share_token, boxes.updated_at, places.uuid AS place_uuid
+        FROM boxes JOIN places ON places.id = boxes.place_id WHERE boxes.updated_at > :since
+        """,
+    )
+    suspend fun changedSince(since: Long): List<BoxSyncRow>
+
+    @Query("SELECT * FROM boxes WHERE uuid = :uuid")
+    suspend fun findByUuid(uuid: String): BoxEntity?
+
+    @Query("SELECT COUNT(*) FROM boxes WHERE share_token = :token AND id != :excludeId")
+    suspend fun countToken(token: String, excludeId: Long): Int
+
+    @Query("DELETE FROM boxes WHERE uuid = :uuid AND updated_at <= :deletedAt")
+    suspend fun deleteByUuidIfOlder(uuid: String, deletedAt: Long): Int
 }
 
 @Dao
@@ -146,6 +174,25 @@ interface ItemDao {
 
     @Query("DELETE FROM items WHERE id = :id")
     suspend fun delete(id: Long)
+
+    // ---- sync ----
+    @Query(
+        """
+        SELECT items.uuid, items.name, items.quantity, items.updated_at,
+               b.uuid AS box_uuid, p.uuid AS place_uuid
+        FROM items
+        LEFT JOIN boxes b ON b.id = items.box_id
+        LEFT JOIN places p ON p.id = items.place_id
+        WHERE items.updated_at > :since
+        """,
+    )
+    suspend fun changedSince(since: Long): List<ItemSyncRow>
+
+    @Query("SELECT * FROM items WHERE uuid = :uuid")
+    suspend fun findByUuid(uuid: String): ItemEntity?
+
+    @Query("DELETE FROM items WHERE uuid = :uuid AND updated_at <= :deletedAt")
+    suspend fun deleteByUuidIfOlder(uuid: String, deletedAt: Long): Int
 }
 
 @Dao
@@ -166,12 +213,33 @@ interface BarcodeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(barcodes: List<BarcodeEntity>)
 
-    @Query("UPDATE barcode_items SET name = :name WHERE barcode = :barcode")
-    suspend fun rename(barcode: String, name: String)
+    /** Also stamps created_at, which the sync treats as "last changed on this phone". */
+    @Query("UPDATE barcode_items SET name = :name, created_at = :at WHERE barcode = :barcode")
+    suspend fun rename(barcode: String, name: String, at: Long)
 
     @Query("DELETE FROM barcode_items WHERE barcode = :barcode")
     suspend fun delete(barcode: String)
 
     @Query("DELETE FROM barcode_items")
+    suspend fun deleteAll()
+
+    /** Saved or renamed on this phone after [since] (see BarcodeRepository). */
+    @Query("SELECT * FROM barcode_items WHERE created_at > :since")
+    suspend fun changedSince(since: Long): List<BarcodeEntity>
+}
+
+@Dao
+interface TombstoneDao {
+    @Insert
+    suspend fun insert(tombstone: TombstoneEntity)
+
+    @Query("SELECT * FROM sync_tombstones ORDER BY id")
+    suspend fun getAll(): List<TombstoneEntity>
+
+    /** Drops tombstones a sync has delivered (ids up to and including [maxId]). */
+    @Query("DELETE FROM sync_tombstones WHERE id <= :maxId")
+    suspend fun deleteUpTo(maxId: Long)
+
+    @Query("DELETE FROM sync_tombstones")
     suspend fun deleteAll()
 }

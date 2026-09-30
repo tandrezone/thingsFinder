@@ -10,6 +10,7 @@ import app.thingsfinder.data.db.PlaceEntity
 import app.thingsfinder.data.db.PlaceSummary
 import app.thingsfinder.data.db.SearchRow
 import app.thingsfinder.data.db.ThingsFinderDatabase
+import app.thingsfinder.data.db.TombstoneEntity
 import app.thingsfinder.domain.BoxLinks
 import app.thingsfinder.domain.ItemDraft
 import app.thingsfinder.domain.ItemLocation
@@ -41,11 +42,16 @@ class InventoryRepository(
     private val db: ThingsFinderDatabase,
     private val now: () -> Long = System::currentTimeMillis,
     private val newUuid: () -> String = { UUID.randomUUID().toString() },
+    /** Called after every successful local write — the sync scheduler hooks in here. */
+    private val onChange: () -> Unit = {},
 ) {
     private val places = db.placeDao()
     private val boxes = db.boxDao()
     private val items = db.itemDao()
     private val barcodes = db.barcodeDao()
+    private val tombstones = db.tombstoneDao()
+
+    private fun <T> T.changed(): T = also { onChange() }
 
     // ---- reads -------------------------------------------------------------
 
@@ -85,7 +91,7 @@ class InventoryRepository(
             val slug = Slugs.unique(name) { places.countSlug(it) > 0 }
             val t = now()
             places.insert(PlaceEntity(uuid = newUuid(), name = name, slug = slug, createdAt = t, updatedAt = t))
-        }
+        }.changed()
     }
 
     suspend fun renamePlace(id: Long, rawName: String): Boolean {
@@ -96,11 +102,17 @@ class InventoryRepository(
             val slug = Slugs.unique(name) { places.countSlug(it, excludeId = id) > 0 }
             places.update(place.copy(name = name, slug = slug, updatedAt = now()))
             true
-        }
+        }.changed()
     }
 
     /** Deletes the place, its boxes and every item in either (ON DELETE CASCADE). */
-    suspend fun deletePlace(id: Long) = places.delete(id)
+    suspend fun deletePlace(id: Long) {
+        db.withTransaction {
+            places.get(id)?.let { tombstones.insert(TombstoneEntity(kind = TombstoneEntity.PLACES, uuid = it.uuid, deletedAt = now())) }
+            places.delete(id)
+        }
+        onChange()
+    }
 
     // ---- boxes --------------------------------------------------------------
 
@@ -122,7 +134,7 @@ class InventoryRepository(
                     updatedAt = t,
                 ),
             )
-        }
+        }.changed()
     }
 
     suspend fun renameBox(id: Long, rawName: String): Boolean {
@@ -133,7 +145,7 @@ class InventoryRepository(
             val slug = Slugs.unique(name) { boxes.countSlug(box.placeId, it, excludeId = id) > 0 }
             boxes.update(box.copy(name = name, slug = slug, updatedAt = now()))
             true
-        }
+        }.changed()
     }
 
     /** PHP: move_box_to() — the box keeps its items; its slug is re-deduplicated inside the new place. */
@@ -144,9 +156,15 @@ class InventoryRepository(
         val slug = Slugs.unique(box.name) { boxes.countSlug(newPlaceId, it, excludeId = id) > 0 }
         boxes.update(box.copy(placeId = newPlaceId, slug = slug, updatedAt = now()))
         true
-    }
+    }.changed()
 
-    suspend fun deleteBox(id: Long) = boxes.delete(id)
+    suspend fun deleteBox(id: Long) {
+        db.withTransaction {
+            boxes.get(id)?.let { tombstones.insert(TombstoneEntity(kind = TombstoneEntity.BOXES, uuid = it.uuid, deletedAt = now())) }
+            boxes.delete(id)
+        }
+        onChange()
+    }
 
     // ---- items --------------------------------------------------------------
 
@@ -169,6 +187,7 @@ class InventoryRepository(
                 barcodes.upsert(BarcodeEntity(barcode, name, now()))
             }
         }
+        onChange()
         return AddItemOutcome.Added(name, recognized = known != null, remembered = barcode.isNotEmpty() && known == null)
     }
 
@@ -180,6 +199,7 @@ class InventoryRepository(
             requireLocationExists(location)
             items.insertAll(clean.map { newItem(location, it.name, clampQuantity(it.quantity.toLong())) })
         }
+        onChange()
         return clean.size
     }
 
@@ -189,6 +209,7 @@ class InventoryRepository(
         if (name.isEmpty()) return false
         val item = items.get(id) ?: return false
         items.update(item.copy(name = name, quantity = clampQuantity(quantity.toLong()), updatedAt = now()))
+        onChange()
         return true
     }
 
@@ -207,9 +228,15 @@ class InventoryRepository(
         }
         items.update(moved.copy(updatedAt = now()))
         true
-    }
+    }.changed()
 
-    suspend fun deleteItem(id: Long) = items.delete(id)
+    suspend fun deleteItem(id: Long) {
+        db.withTransaction {
+            items.get(id)?.let { tombstones.insert(TombstoneEntity(kind = TombstoneEntity.ITEMS, uuid = it.uuid, deletedAt = now())) }
+            items.delete(id)
+        }
+        onChange()
+    }
 
     private suspend fun requireLocationExists(location: ItemLocation) {
         val exists = when (location) {

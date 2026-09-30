@@ -20,6 +20,7 @@ class BarcodeRepository(
     private val lookup: BarcodeNameLookup,
     private val settings: Settings,
     private val now: () -> Long = System::currentTimeMillis,
+    private val onChange: () -> Unit = {},
 ) {
     private val dao = db.barcodeDao()
 
@@ -41,13 +42,15 @@ class BarcodeRepository(
         val name = cleanName(rawName)
         if (barcode.isEmpty() || name.isEmpty()) return false
         dao.upsert(BarcodeEntity(barcode, name, now()))
+        onChange()
         return true
     }
 
     suspend fun rename(barcode: String, rawName: String): Boolean {
         val name = cleanName(rawName)
         if (name.isEmpty()) return false
-        dao.rename(barcode, name)
+        dao.rename(barcode, name, now())
+        onChange()
         return true
     }
 
