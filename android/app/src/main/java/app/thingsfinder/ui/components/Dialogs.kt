@@ -167,6 +167,7 @@ fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     destructive: Boolean = true,
+    dismissLabel: String? = null,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -177,7 +178,7 @@ fun ConfirmDialog(
                 Text(confirmLabel, color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(dismissLabel ?: stringResource(R.string.action_cancel)) } },
     )
 }
 

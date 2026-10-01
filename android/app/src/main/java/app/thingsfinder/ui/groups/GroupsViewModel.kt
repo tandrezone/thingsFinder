@@ -160,8 +160,8 @@ class GroupsViewModel(
     /**
      * Before leaving or deleting the group this phone shows: switch to another
      * one first (the default, else any), so unsent changes still reach the old
-     * group. Returns false if that switch was refused. [needsSwitchAfter]: there's
-     * no other group, so the switch has to wait until the server has dropped this one.
+     * group. With no other group, the switch has to wait until the server has
+     * dropped this one ([MoveOff.SwitchAfter]).
      */
     private suspend fun moveOffIfActive(groupId: Long): MoveOff {
         if (activeId() != groupId) return MoveOff.NotActive
@@ -253,7 +253,7 @@ class GroupsViewModel(
     private fun leaveOrDelete(group: RemoteGroup, call: suspend (String, String) -> ApiResult<Unit>) = work {
         val moved = moveOffIfActive(group.id)
         if (moved == MoveOff.Refused) return@work
-        val r = request(call)
+        val r = request(block = call)
         if (r is Reply.Failed) {
             say(r.message)
         } else {

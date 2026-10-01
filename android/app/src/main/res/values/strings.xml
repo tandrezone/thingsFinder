@@ -12,6 +12,9 @@
     <string name="action_add">Add</string>
     <string name="action_back">Back</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_done">Done</string>
+    <string name="action_not_now">Not now</string>
+    <string name="action_refresh">Refresh</string>
     <string name="action_clear">Clear</string>
     <string name="action_delete">Delete</string>
     <string name="action_edit">Edit</string>
@@ -74,7 +77,26 @@
     <string name="msg_box_deleted">Box deleted.</string>
     <string name="msg_box_name_empty">Box name cannot be empty.</string>
     <string name="msg_box_link_unknown">No box on this phone matches that label.</string>
-    <string name="msg_not_a_box_code">That isn\'t a thingsFinder box label.</string>
+    <string name="msg_place_link_unknown">No place on this phone matches that code.</string>
+    <string name="msg_link_unknown">No box or place on this phone matches that code.</string>
+    <string name="msg_not_a_box_code">That isn\'t a thingsFinder label.</string>
+
+    <!-- Add-item / remove-item QR codes (boxes and places) -->
+    <string name="qr_codes_title">QR codes</string>
+    <string name="action_qr_explainer_box">Stick these on the box too: scanning "Add item" opens this box ready to add something, "Remove item" opens it to take something out.</string>
+    <string name="action_qr_explainer_place">Scanning "Add item" opens this place ready to add something; "Remove item" opens it to take something out.</string>
+    <string name="action_remove_item">Remove item</string>
+    <string name="action_label_short">Label</string>
+    <string name="action_qr_short">QR</string>
+    <string name="label_scan_to_add">Scan to add</string>
+    <string name="label_scan_to_remove">Scan to remove</string>
+    <string name="cd_add_qr">Add-item QR code for %1$s</string>
+    <string name="cd_remove_qr">Remove-item QR code for %1$s</string>
+    <string name="remove_mode_title">Tap an item to remove it</string>
+    <string name="remove_mode_text">−1 takes one out; the bin removes the item completely.</string>
+    <string name="action_take_one">−1</string>
+    <string name="cd_remove_item">Remove %1$s</string>
+    <string name="msg_item_took_one">Took one out — %1$d left.</string>
 
     <!-- Items -->
     <string name="items_title">Items</string>
@@ -191,6 +213,22 @@
     <string name="cloud_sync_text">Keeps this phone and your account on %1$s in step — changes made on either side show up on the other.</string>
     <string name="cloud_not_signed_in">Sign in to your %1$s account to start syncing. Until then everything stays only on this phone.</string>
     <string name="cloud_sign_in">Sign in</string>
+    <string name="cloud_create_account">Create account</string>
+    <string name="cloud_register_title">Create an account</string>
+    <string name="cloud_register_text">Creates an account on this server (you can use it on the website too) and starts syncing this phone\'s places, boxes and items to your own new group.</string>
+    <string name="cloud_registered">Account %1$s created — syncing…</string>
+    <string name="cloud_username_help">3–40 letters, digits, dots, dashes or underscores.</string>
+    <string name="cloud_password_help">At least %1$d characters.</string>
+    <string name="cloud_error_username_rules">Usernames are 3–40 letters, digits, dots, dashes or underscores.</string>
+    <string name="cloud_error_password_short">The password needs at least %1$d characters.</string>
+    <string name="cloud_error_password_mismatch">The two passwords don\'t match.</string>
+    <string name="cloud_error_username_taken">That username is already taken — pick another, or sign in if it\'s yours.</string>
+    <string name="cloud_error_registration_disabled">This server doesn\'t allow new accounts. Ask whoever runs it, or sign in instead.</string>
+    <string name="cloud_error_no_register">That server can\'t create accounts yet — it needs the updated thingsFinder server code.</string>
+    <string name="cloud_error_server_says">%1$s</string>
+    <string name="cloud_group">Group: %1$s</string>
+    <string name="cloud_group_view_only">Group: %1$s (view only)</string>
+    <string name="cloud_group_default">Group: your default group</string>
     <string name="cloud_sign_in_title">Sign in to sync</string>
     <string name="cloud_sign_in_text">Use the same username and password as the thingsFinder website. Your password is only sent to the server once; the phone keeps a revocable token instead.</string>
     <string name="cloud_signed_in_as">Signed in as %1$s on %2$s</string>
@@ -217,6 +255,78 @@
     <string name="field_password">Password</string>
     <string name="cd_show_password">Show password</string>
     <string name="cd_hide_password">Hide password</string>
+    <string name="field_confirm_password">Confirm password</string>
+
+    <!-- Groups -->
+    <string name="groups_title">Groups</string>
+    <string name="groups_intro">Everyone in a group shares its places, boxes and items. This phone shows one group at a time — switching replaces what\'s on the phone with that group\'s things (anything not synced yet is sent first).</string>
+    <string name="groups_sign_in_first">Sign in under Settings → Cloud sync to use groups.</string>
+    <string name="groups_yours">Your groups</string>
+    <string name="groups_active">On this phone</string>
+    <string name="groups_on_this_phone">on this phone</string>
+    <string name="groups_active_text">This is the group on this phone.</string>
+    <string name="groups_role_owner">owner</string>
+    <string name="groups_role_member">member</string>
+    <string name="groups_view_only">view only</string>
+    <string name="groups_view_only_text">View only: you can look, but changes made on this phone aren\'t saved to this group.</string>
+    <string name="groups_members">Members</string>
+    <string name="cd_remove_member">Remove %1$s from the group</string>
+    <string name="groups_switch">Switch to this group</string>
+    <string name="groups_switch_title">Switch to %1$s?</string>
+    <string name="groups_switch_text">Changes not synced yet are sent first; then the places, boxes and items on this phone are replaced by this group\'s.</string>
+    <string name="groups_switched">Now showing %1$s.</string>
+    <string name="groups_switched_pull_failed">Switched to %1$s — its things will arrive with the next sync.</string>
+    <string name="groups_switch_refused">Didn\'t switch, nothing changed: %1$s</string>
+    <string name="groups_invite_title">Invite people</string>
+    <string name="groups_invite_text">Scan this QR, open the link, or enter the group name and key under Groups → Add a group.</string>
+    <string name="groups_invite_name">Name: %1$s</string>
+    <string name="groups_invite_key">Key: %1$s</string>
+    <string name="cd_invite_qr">Invite QR code for %1$s</string>
+    <string name="groups_share_invite">Share invite</string>
+    <string name="groups_invite_message">Join my thingsFinder group "%1$s": %2$s
+
+Or in the app: Settings → Groups → Enter name and key — name "%1$s", key %3$s.</string>
+    <string name="groups_copy_link">Copy link</string>
+    <string name="groups_copy_key">Copy key</string>
+    <string name="groups_reset_invite">New invite</string>
+    <string name="groups_reset_invite_title">Make a new invite?</string>
+    <string name="groups_reset_invite_text">The current link, QR code and key stop working. People already in the group stay in it.</string>
+    <string name="groups_invite_reset">New invite ready — the old one no longer works.</string>
+    <string name="groups_rename">Rename group</string>
+    <string name="groups_renamed">Group renamed.</string>
+    <string name="groups_delete">Delete group</string>
+    <string name="groups_delete_title">Delete "%1$s"?</string>
+    <string name="groups_delete_text">This deletes the group with all its places, boxes and items, for every member. It can\'t be undone.</string>
+    <string name="groups_deleted">Group "%1$s" deleted.</string>
+    <string name="groups_leave">Leave group</string>
+    <string name="groups_leave_title">Leave "%1$s"?</string>
+    <string name="groups_leave_text">You\'ll stop seeing its places, boxes and items. To come back you\'ll need a new invite.</string>
+    <string name="groups_left">You left "%1$s".</string>
+    <string name="groups_remove_member_title">Remove %1$s?</string>
+    <string name="groups_remove_member_text">They\'ll stop seeing this group\'s places, boxes and items.</string>
+    <string name="groups_member_removed">%1$s removed from the group.</string>
+    <string name="groups_add_title">Add a group</string>
+    <string name="groups_add_text">Join someone else\'s group with their invite, or start a new one.</string>
+    <string name="groups_join_scan">Scan an invite QR code</string>
+    <string name="groups_join_paste">Paste an invite link</string>
+    <string name="groups_join_key">Enter name and key</string>
+    <string name="groups_join_key_text">Ask someone in the group for its exact name and its 8-character key (like K7F3-9QX2).</string>
+    <string name="groups_create">Create a group</string>
+    <string name="groups_join">Join</string>
+    <string name="groups_join_link_title">Join a group?</string>
+    <string name="groups_join_link_text">This invite adds you to a thingsFinder group. Afterwards you can choose whether to switch this phone to it.</string>
+    <string name="groups_joined">You joined "%1$s".</string>
+    <string name="groups_created">Group "%1$s" created.</string>
+    <string name="field_group_name">Group name</string>
+    <string name="field_group_name_hint">e.g. Family</string>
+    <string name="field_invite_link">Invite link</string>
+    <string name="field_invite_key">Key</string>
+    <string name="groups_error_name_empty">Group name cannot be empty.</string>
+    <string name="groups_error_key_format">The key is 8 letters and digits, like K7F3-9QX2.</string>
+    <string name="groups_error_not_invite">That isn\'t a thingsFinder invite link.</string>
+    <string name="groups_error_invite_not_found">No group matches that invite — check it, or ask for a new one.</string>
+    <string name="groups_error_gone">That group no longer exists, or you\'re not in it any more.</string>
+    <string name="groups_error_no_api">That server doesn\'t support groups yet — it needs the updated thingsFinder server code.</string>
 
     <!-- SQLite database export / import -->
     <string name="settings_database_title">Database file</string>
@@ -236,6 +346,10 @@
     <plurals name="item_count">
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>
+    </plurals>
+    <plurals name="member_count">
+        <item quantity="one">%1$d member</item>
+        <item quantity="other">%1$d members</item>
     </plurals>
     <plurals name="search_result_count">
         <item quantity="one">%1$d result</item>
