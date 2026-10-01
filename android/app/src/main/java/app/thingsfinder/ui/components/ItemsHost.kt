@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.thingsfinder.R
 import app.thingsfinder.data.db.ItemEntity
 import app.thingsfinder.domain.ItemLocation
+import app.thingsfinder.domain.LinkAction
 import app.thingsfinder.platform.Sharing
 import app.thingsfinder.ui.common.ContainerViewModel
 import app.thingsfinder.ui.common.ReviewState
@@ -34,6 +35,8 @@ class ItemsUiState {
     var editId by mutableStateOf<Long?>(null)
     var moveId by mutableStateOf<Long?>(null)
     var deleteId by mutableStateOf<Long?>(null)
+    /** Opened by a "remove item" QR code: each item gets −1 and delete buttons. */
+    var removeMode by mutableStateOf(false)
 }
 
 private val addDraftSaver = listSaver<AddItemDraft, Any>(
@@ -46,7 +49,7 @@ private val addDraftSaver = listSaver<AddItemDraft, Any>(
  * goes with it (add, edit, move, delete, photo, JSON import, review).
  */
 private val itemsUiSaver = listSaver<ItemsUiState, Any?>(
-    save = { listOf(it.addOpen, it.photoOpen, it.importOpen, it.reviewOpen, it.editId, it.moveId, it.deleteId) },
+    save = { listOf(it.addOpen, it.photoOpen, it.importOpen, it.reviewOpen, it.editId, it.moveId, it.deleteId, it.removeMode) },
     restore = {
         ItemsUiState().apply {
             addOpen = it[0] as Boolean
@@ -56,6 +59,7 @@ private val itemsUiSaver = listSaver<ItemsUiState, Any?>(
             editId = it[4] as Long?
             moveId = it[5] as Long?
             deleteId = it[6] as Long?
+            removeMode = it[7] as Boolean
         }
     },
 )
@@ -64,11 +68,28 @@ private val itemsUiSaver = listSaver<ItemsUiState, Any?>(
 @Composable
 fun rememberItemsUiState(): ItemsUiState = rememberSaveable(saver = itemsUiSaver) { ItemsUiState() }
 
+/** Applies an add / remove link once per screen visit (not again after rotation or coming back to it). */
+@Composable
+fun ApplyInitialAction(action: LinkAction, ui: ItemsUiState) {
+    var applied by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(action) {
+        if (applied) return@LaunchedEffect
+        applied = true
+        when (action) {
+            LinkAction.Add -> ui.addOpen = true
+            LinkAction.Remove -> ui.removeMode = true
+            LinkAction.Open -> Unit
+        }
+    }
+}
+
+/** [onTakeOne]: remove mode's −1 button (the last one goes through the delete confirmation instead). */
 fun LazyListScope.itemsSection(
     items: UiState<List<ItemEntity>>,
     ui: ItemsUiState,
     review: ReviewState?,
     ocrRunning: Boolean,
+    onTakeOne: (Long) -> Unit,
     emptyText: @Composable () -> String,
 ) {
     when (items) {
@@ -76,7 +97,19 @@ fun LazyListScope.itemsSection(
         is UiState.Error, UiState.NotFound -> item(key = "items-error") {
             EmptyState(Icons.Outlined.Inventory2, stringResource(R.string.error_loading))
         }
-        is UiState.Content -> {
+        is UiState.Content -> if (ui.removeMode) {
+            item(key = "remove-banner") { RemoveModeBanner(onDone = { ui.removeMode = false }) }
+            if (items.data.isEmpty()) {
+                item(key = "items-empty") { EmptyState(Icons.Outlined.Inventory2, emptyText()) }
+            }
+            items(items.data, key = { "item-${it.id}" }) { item ->
+                RemoveItemCard(
+                    item = item,
+                    onTakeOne = { if (item.quantity > 1) onTakeOne(item.id) else ui.deleteId = item.id },
+                    onDelete = { ui.deleteId = item.id },
+                )
+            }
+        } else {
             if (review != null) {
                 item(key = "review-pending") { PendingReviewCard(review, onOpen = { ui.reviewOpen = true }) }
             }

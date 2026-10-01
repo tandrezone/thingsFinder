@@ -51,11 +51,15 @@ import app.thingsfinder.R
 import app.thingsfinder.data.db.BoxSummary
 import app.thingsfinder.data.db.ItemEntity
 import app.thingsfinder.data.db.PlaceEntity
+import app.thingsfinder.domain.BoxLinks
+import app.thingsfinder.domain.LinkAction
 import app.thingsfinder.ui.common.ReviewState
 import app.thingsfinder.ui.common.ScreenEvent
 import app.thingsfinder.ui.common.UiState
 import app.thingsfinder.ui.common.containerFactory
 import app.thingsfinder.ui.common.text
+import app.thingsfinder.ui.components.ActionQrCard
+import app.thingsfinder.ui.components.ApplyInitialAction
 import app.thingsfinder.ui.components.ConfirmDialog
 import app.thingsfinder.ui.components.ContentWidth
 import app.thingsfinder.ui.components.EmptyState
@@ -74,11 +78,13 @@ import app.thingsfinder.ui.components.pluralText
 import app.thingsfinder.ui.components.rememberItemsUiState
 import app.thingsfinder.ui.theme.ThingsFinderTheme
 
+/** [initialAction]: from an add-item / remove-item QR code — open with the add sheet up, or in remove mode. */
 @Composable
 fun PlaceDetailScreen(
     placeId: Long,
     onBack: () -> Unit,
     onOpenBox: (Long) -> Unit,
+    initialAction: LinkAction = LinkAction.Open,
     vm: PlaceDetailViewModel = viewModel(
         key = "place-$placeId",
         factory = containerFactory { PlaceDetailViewModel(placeId, it.inventory, it.barcodes, it.textScanner::extractItems) },
@@ -92,6 +98,7 @@ fun PlaceDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val itemsUi = rememberItemsUiState()
+    ApplyInitialAction(initialAction, itemsUi)
 
     LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it.resolve(context)) } }
     LaunchedEffect(vm) { vm.events.collect { if (it == ScreenEvent.Deleted) onBack() } }
@@ -110,6 +117,7 @@ fun PlaceDetailScreen(
         onBack = onBack,
         onOpenBox = onOpenBox,
         onAddItem = { itemsUi.addOpen = true },
+        onTakeOne = vm::takeOne,
         onAddBox = { addBoxOpen = true },
         onPlaceDialog = { dialog = it },
     )
@@ -195,6 +203,7 @@ fun PlaceDetailContent(
     onBack: () -> Unit,
     onOpenBox: (Long) -> Unit,
     onAddItem: () -> Unit,
+    onTakeOne: (Long) -> Unit,
     onAddBox: () -> Unit,
     onPlaceDialog: (PlaceScreenDialog) -> Unit,
 ) {
@@ -244,7 +253,8 @@ fun PlaceDetailContent(
                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    boxesSection(state.data.boxes, onOpenBox, onAddBox, onPlaceDialog)
+                    // Remove mode is about the loose items: show just those.
+                    if (!itemsUi.removeMode) boxesSection(state.data.boxes, onOpenBox, onAddBox, onPlaceDialog)
                     item(key = "items-header") {
                         Column {
                             SectionHeader(stringResource(R.string.items_title))
@@ -255,7 +265,19 @@ fun PlaceDetailContent(
                             )
                         }
                     }
-                    itemsSection(items, itemsUi, review, ocrRunning) { stringResource(R.string.items_empty) }
+                    itemsSection(items, itemsUi, review, ocrRunning, onTakeOne) { stringResource(R.string.items_empty) }
+                    if (!itemsUi.removeMode) {
+                        item(key = "qr-header") { SectionHeader(stringResource(R.string.qr_codes_title)) }
+                        item(key = "qr-actions") {
+                            val place = state.data.place
+                            ActionQrCard(
+                                name = place.name,
+                                isPlace = true,
+                                addLink = BoxLinks.placeLink(place.shareToken, LinkAction.Add),
+                                removeLink = BoxLinks.placeLink(place.shareToken, LinkAction.Remove),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -310,7 +332,7 @@ private fun LazyListScope.boxesSection(
 @ScreenPreviews
 @Composable
 private fun PlaceDetailPreview() = ThingsFinderTheme {
-    val place = PlaceEntity(1, "u1", "Garage", "garage", 0, 0)
+    val place = PlaceEntity(1, "u1", "Garage", "garage", "0123456789abcdef0123456789abcdef", 0, 0)
     PlaceDetailContent(
         state = UiState.Content(
             PlaceDetail(place, listOf(BoxSummary(1, 1, "Tools bin", "tools-bin", 12), BoxSummary(2, 1, "Paint shelf", "paint-shelf", 0))),
@@ -325,6 +347,6 @@ private fun PlaceDetailPreview() = ThingsFinderTheme {
         ocrRunning = false,
         itemsUi = rememberItemsUiState(),
         snackbar = remember { SnackbarHostState() },
-        onBack = {}, onOpenBox = {}, onAddItem = {}, onAddBox = {}, onPlaceDialog = {},
+        onBack = {}, onOpenBox = {}, onAddItem = {}, onTakeOne = {}, onAddBox = {}, onPlaceDialog = {},
     )
 }

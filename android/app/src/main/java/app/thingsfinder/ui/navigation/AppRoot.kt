@@ -31,11 +31,15 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import app.thingsfinder.R
 import app.thingsfinder.ThingsFinderApp
+import app.thingsfinder.domain.AppLink
 import app.thingsfinder.domain.BoxLinks
+import app.thingsfinder.domain.LinkAction
+import app.thingsfinder.domain.LinkTarget
 import app.thingsfinder.platform.CodeScanner
 import app.thingsfinder.platform.ScanResult
 import app.thingsfinder.ui.barcodes.BarcodesScreen
 import app.thingsfinder.ui.box.BoxDetailScreen
+import app.thingsfinder.ui.groups.GroupsScreen
 import app.thingsfinder.ui.place.PlaceDetailScreen
 import app.thingsfinder.ui.places.PlacesScreen
 import app.thingsfinder.ui.search.SearchScreen
@@ -53,7 +57,7 @@ private fun NavDestination?.topLevel(): TopLevel = when {
     this == null -> TopLevel.Places
     hasRoute<SearchRoute>() -> TopLevel.Search
     hasRoute<BarcodesRoute>() -> TopLevel.Barcodes
-    hasRoute<SettingsRoute>() -> TopLevel.Settings
+    hasRoute<SettingsRoute>() || hasRoute<GroupsRoute>() -> TopLevel.Settings
     else -> TopLevel.Places // places, a place, or a box
 }
 
@@ -63,27 +67,48 @@ private fun NavDestination?.topLevel(): TopLevel = when {
  * window size class (PHP's top bar links: home, search, barcodes, account menu).
  */
 @Composable
-fun AppRoot(pendingBoxToken: String?, onBoxTokenHandled: () -> Unit) {
+fun AppRoot(pendingLink: AppLink?, onLinkHandled: () -> Unit) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val current = backStack?.destination.topLevel()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val inventory = (context.applicationContext as ThingsFinderApp).container.inventory
-    val notFound = stringResource(R.string.msg_box_link_unknown)
+    val boxNotFound = stringResource(R.string.msg_box_link_unknown)
+    val placeNotFound = stringResource(R.string.msg_place_link_unknown)
+    val notFound = stringResource(R.string.msg_link_unknown)
     val notABox = stringResource(R.string.msg_not_a_box_code)
 
-    suspend fun openToken(token: String) {
-        val box = inventory.findBoxByToken(token)
-        if (box == null) Toast.makeText(context, notFound, Toast.LENGTH_LONG).show()
-        else nav.navigate(BoxRoute(box.id)) { launchSingleTop = true }
+    /** Box and place links open that screen (add / remove: with the sheet up or in remove mode); invites open Groups. */
+    suspend fun openLink(link: AppLink) {
+        when (link) {
+            is AppLink.JoinGroup -> nav.navigate(GroupsRoute(link.token)) { launchSingleTop = true }
+            is AppLink.Container -> {
+                val token = link.target.token
+                val box = if (link.target is LinkTarget.Place) null else inventory.findBoxByToken(token)
+                val place = if (box != null || link.target is LinkTarget.Box) null else inventory.findPlaceByToken(token)
+                val action = link.action.segment
+                when {
+                    box != null -> nav.navigate(BoxRoute(box.id, action)) { launchSingleTop = action == null }
+                    place != null -> nav.navigate(PlaceRoute(place.id, action)) { launchSingleTop = action == null }
+                    else -> {
+                        val message = when (link.target) {
+                            is LinkTarget.Box -> boxNotFound
+                            is LinkTarget.Place -> placeNotFound
+                            is LinkTarget.Either -> notFound
+                        }
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
-    // thingsfinder://box/{token} opened from the system camera or another app.
-    LaunchedEffect(pendingBoxToken) {
-        if (pendingBoxToken != null) {
-            openToken(pendingBoxToken)
-            onBoxTokenHandled()
+    // thingsfinder://box|place|join/... opened from the system camera or another app.
+    LaunchedEffect(pendingLink) {
+        if (pendingLink != null) {
+            openLink(pendingLink)
+            onLinkHandled()
         }
     }
 
@@ -91,8 +116,8 @@ fun AppRoot(pendingBoxToken: String?, onBoxTokenHandled: () -> Unit) {
         scope.launch {
             when (val r = CodeScanner.scanQr(context)) {
                 is ScanResult.Scanned -> {
-                    val token = BoxLinks.tokenFrom(r.value)
-                    if (token == null) Toast.makeText(context, notABox, Toast.LENGTH_LONG).show() else openToken(token)
+                    val link = BoxLinks.parse(r.value)
+                    if (link == null) Toast.makeText(context, notABox, Toast.LENGTH_LONG).show() else openLink(link)
                 }
                 is ScanResult.Failed -> Toast.makeText(context, r.message, Toast.LENGTH_LONG).show()
                 ScanResult.Cancelled -> Unit
@@ -123,6 +148,7 @@ fun AppRoot(pendingBoxToken: String?, onBoxTokenHandled: () -> Unit) {
                     placeId = route.placeId,
                     onBack = { nav.popBackStack() },
                     onOpenBox = { nav.navigate(BoxRoute(it)) },
+                    initialAction = LinkAction.fromSegment(route.action),
                 )
             }
             composable<BoxRoute> { entry ->
@@ -139,13 +165,17 @@ fun AppRoot(pendingBoxToken: String?, onBoxTokenHandled: () -> Unit) {
                             nav.navigate(PlaceRoute(placeId))
                         }
                     },
+                    initialAction = LinkAction.fromSegment(route.action),
                 )
             }
             composable<SearchRoute> {
                 SearchScreen(onOpenPlace = { nav.navigate(PlaceRoute(it)) }, onOpenBox = { nav.navigate(BoxRoute(it)) })
             }
             composable<BarcodesRoute> { BarcodesScreen() }
-            composable<SettingsRoute> { SettingsScreen() }
+            composable<SettingsRoute> { SettingsScreen(onOpenGroups = { nav.navigate(GroupsRoute()) }) }
+            composable<GroupsRoute> { entry ->
+                GroupsScreen(joinToken = entry.toRoute<GroupsRoute>().joinToken, onBack = { nav.popBackStack() })
+            }
         }
     }
 }

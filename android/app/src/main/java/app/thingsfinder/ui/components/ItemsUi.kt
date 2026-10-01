@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -111,6 +112,50 @@ fun ItemCard(
                     add(MenuAction(stringResource(R.string.action_delete), Icons.Outlined.Delete, destructive = true, onClick = onDelete))
                 },
             )
+        }
+    }
+}
+
+/** Remove mode's banner — scanning a "remove item" code lands here. */
+@Composable
+fun RemoveModeBanner(onDone: () -> Unit, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.remove_mode_title), style = MaterialTheme.typography.titleSmall)
+                Text(stringResource(R.string.remove_mode_text), style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onDone) { Text(stringResource(R.string.action_done)) }
+        }
+    }
+}
+
+/** An item in remove mode: take one out, or remove it altogether. */
+@Composable
+fun RemoveItemCard(item: ItemEntity, onTakeOne: () -> Unit, onDelete: () -> Unit, modifier: Modifier = Modifier) {
+    OutlinedCard(modifier = modifier.fillMaxWidth(), colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)) {
+        Row(Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                item.name,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(8.dp))
+            QtyBadge(item.quantity)
+            Spacer(Modifier.weight(1f))
+            OutlinedButton(onClick = onTakeOne) {
+                Icon(Icons.Outlined.Remove, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.action_take_one))
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.cd_remove_item, item.name), tint = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }

@@ -33,3 +33,12 @@ fun String.truncateCodePoints(max: Int): String {
 
 /** Normalise a user-entered name: trimmed and capped at [Limits.MAX_NAME_LENGTH]. */
 fun cleanName(raw: String): String = raw.trim().truncateCodePoints(Limits.MAX_NAME_LENGTH)
+
+/** New-account rules, the same the server checks on POST /api/auth/register (so the form can say what's wrong first). */
+object AccountRules {
+    const val MIN_PASSWORD = 8
+    private val usernamePattern = Regex("^[A-Za-z0-9._-]{3,40}$")
+
+    fun validUsername(username: String): Boolean = usernamePattern.matches(username.trim())
+    fun validPassword(password: String): Boolean = password.length >= MIN_PASSWORD
+}

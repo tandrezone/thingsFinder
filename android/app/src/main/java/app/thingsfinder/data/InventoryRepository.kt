@@ -80,6 +80,7 @@ class InventoryRepository(
     }
 
     suspend fun findBoxByToken(token: String): BoxEntity? = boxes.findByToken(token)
+    suspend fun findPlaceByToken(token: String): PlaceEntity? = places.findByToken(token)
 
     // ---- places -------------------------------------------------------------
 
@@ -90,7 +91,9 @@ class InventoryRepository(
         return db.withTransaction {
             val slug = Slugs.unique(name) { places.countSlug(it) > 0 }
             val t = now()
-            places.insert(PlaceEntity(uuid = newUuid(), name = name, slug = slug, createdAt = t, updatedAt = t))
+            places.insert(
+                PlaceEntity(uuid = newUuid(), name = name, slug = slug, shareToken = BoxLinks.newShareToken(), createdAt = t, updatedAt = t),
+            )
         }.changed()
     }
 
@@ -211,6 +214,20 @@ class InventoryRepository(
         items.update(item.copy(name = name, quantity = clampQuantity(quantity.toLong()), updatedAt = now()))
         onChange()
         return true
+    }
+
+    /**
+     * Takes one out (the "remove item" QR code): quantity minus one. Returns
+     * how many are left, or null if the item is gone or there's only one —
+     * removing the last one is a delete, which the UI confirms first.
+     */
+    suspend fun takeOne(id: Long): Int? {
+        val item = items.get(id) ?: return null
+        if (item.quantity <= 1) return null
+        val left = item.quantity - 1
+        items.update(item.copy(quantity = left, updatedAt = now()))
+        onChange()
+        return left
     }
 
     /** PHP: move_item_to() — into a box, or loose into a place. */

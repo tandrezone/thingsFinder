@@ -59,6 +59,7 @@ import app.thingsfinder.R
 import app.thingsfinder.data.db.BoxWithPlace
 import app.thingsfinder.data.db.ItemEntity
 import app.thingsfinder.domain.BoxLinks
+import app.thingsfinder.domain.LinkAction
 import app.thingsfinder.domain.Slugs
 import app.thingsfinder.platform.LabelRenderer
 import app.thingsfinder.platform.QrCodes
@@ -68,6 +69,8 @@ import app.thingsfinder.ui.common.ScreenEvent
 import app.thingsfinder.ui.common.UiState
 import app.thingsfinder.ui.common.containerFactory
 import app.thingsfinder.ui.common.text
+import app.thingsfinder.ui.components.ActionQrCard
+import app.thingsfinder.ui.components.ApplyInitialAction
 import app.thingsfinder.ui.components.ConfirmDialog
 import app.thingsfinder.ui.components.ContentWidth
 import app.thingsfinder.ui.components.ErrorState
@@ -90,11 +93,13 @@ import kotlinx.coroutines.withContext
 
 private enum class BoxDialog { Rename, Move, Delete }
 
+/** [initialAction]: from an add-item / remove-item QR code — open with the add sheet up, or in remove mode. */
 @Composable
 fun BoxDetailScreen(
     boxId: Long,
     onBack: () -> Unit,
     onOpenPlace: (Long) -> Unit,
+    initialAction: LinkAction = LinkAction.Open,
     vm: BoxDetailViewModel = viewModel(
         key = "box-$boxId",
         factory = containerFactory { BoxDetailViewModel(boxId, it.inventory, it.barcodes, it.textScanner::extractItems) },
@@ -110,6 +115,7 @@ fun BoxDetailScreen(
     val scope = rememberCoroutineScope()
     val itemsUi = rememberItemsUiState()
     var dialog by remember { mutableStateOf<BoxDialog?>(null) }
+    ApplyInitialAction(initialAction, itemsUi)
 
     LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it.resolve(context)) } }
     LaunchedEffect(vm) { vm.events.collect { if (it == ScreenEvent.Deleted) onBack() } }
@@ -128,6 +134,7 @@ fun BoxDetailScreen(
         onBack = onBack,
         onOpenPlace = onOpenPlace,
         onAddItem = { itemsUi.addOpen = true },
+        onTakeOne = vm::takeOne,
         onDialog = { dialog = it },
         onShareLabel = { b ->
             scope.launch {
@@ -184,6 +191,7 @@ private fun BoxDetailContent(
     onBack: () -> Unit,
     onOpenPlace: (Long) -> Unit,
     onAddItem: () -> Unit,
+    onTakeOne: (Long) -> Unit,
     onDialog: (BoxDialog) -> Unit,
     onShareLabel: (BoxWithPlace) -> Unit,
     onShareQr: (BoxWithPlace) -> Unit,
@@ -239,9 +247,20 @@ private fun BoxDetailContent(
                             label = { Text(stringResource(R.string.box_in_place, state.data.placeName)) },
                         )
                     }
-                    item(key = "qr") { QrCard(state.data, onShareLabel = { onShareLabel(state.data) }, onShareQr = { onShareQr(state.data) }) }
+                    // Remove mode is about the items: keep them at the top.
+                    if (!itemsUi.removeMode) {
+                        item(key = "qr") { QrCard(state.data, onShareLabel = { onShareLabel(state.data) }, onShareQr = { onShareQr(state.data) }) }
+                        item(key = "qr-actions") {
+                            ActionQrCard(
+                                name = state.data.name,
+                                isPlace = false,
+                                addLink = BoxLinks.boxLink(state.data.shareToken, LinkAction.Add),
+                                removeLink = BoxLinks.boxLink(state.data.shareToken, LinkAction.Remove),
+                            )
+                        }
+                    }
                     item(key = "items-header") { SectionHeader(stringResource(R.string.items_title)) }
-                    itemsSection(items, itemsUi, review, ocrRunning) { stringResource(R.string.box_empty) }
+                    itemsSection(items, itemsUi, review, ocrRunning, onTakeOne) { stringResource(R.string.box_empty) }
                 }
             }
         }
@@ -309,7 +328,7 @@ private fun BoxDetailPreview() = ThingsFinderTheme {
         ocrRunning = false,
         itemsUi = rememberItemsUiState(),
         snackbar = remember { SnackbarHostState() },
-        onBack = {}, onOpenPlace = {}, onAddItem = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
+        onBack = {}, onOpenPlace = {}, onAddItem = {}, onTakeOne = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
     )
 }
 
@@ -319,7 +338,7 @@ private fun BoxEmptyPreview() = ThingsFinderTheme {
     BoxDetailContent(
         state = UiState.Content(previewBox), items = UiState.Content(emptyList()), review = null, ocrRunning = true,
         itemsUi = rememberItemsUiState(), snackbar = remember { SnackbarHostState() },
-        onBack = {}, onOpenPlace = {}, onAddItem = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
+        onBack = {}, onOpenPlace = {}, onAddItem = {}, onTakeOne = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
     )
 }
 
@@ -329,6 +348,6 @@ private fun BoxNotFoundPreview() = ThingsFinderTheme {
     BoxDetailContent(
         state = UiState.NotFound, items = UiState.Loading, review = null, ocrRunning = false,
         itemsUi = rememberItemsUiState(), snackbar = remember { SnackbarHostState() },
-        onBack = {}, onOpenPlace = {}, onAddItem = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
+        onBack = {}, onOpenPlace = {}, onAddItem = {}, onTakeOne = {}, onDialog = {}, onShareLabel = {}, onShareQr = {},
     )
 }

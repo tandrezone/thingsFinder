@@ -15,7 +15,9 @@
  *
  * The one endpoint, POST /api/sync, takes the phone's changes since its
  * last sync, applies them (last write wins, per row), and answers with
- * everything that changed on the server since the phone's cursor.
+ * everything that changed on the server since the phone's cursor. A phone
+ * syncs one group at a time (group_id in the request, or the user's
+ * default group).
  */
 
 const API_TOKEN_TTL_DAYS = 365;
@@ -173,43 +175,49 @@ function sync_uuid($value): ?string
     return (is_string($value) && preg_match('/^[A-Za-z0-9-]{8,64}$/', $value)) ? $value : null;
 }
 
+/** A box/place share token as sent by the phone, or null if absent or malformed. */
+function sync_token($value): ?string
+{
+    return (is_string($value) && preg_match('/^[A-Za-z0-9_-]{8,128}$/', $value)) ? $value : null;
+}
+
 function sync_name($value): string
 {
     $name = is_string($value) ? trim($value) : '';
     return mb_substr($name, 0, IMPORT_MAX_NAME_LENGTH);
 }
 
-/** A place (by uuid) only if it belongs to $ownerId. */
-function sync_find_place(PDO $pdo, int $ownerId, string $uuid): ?array
+/** A place (by uuid) only if it's in group $groupId. */
+function sync_find_place(PDO $pdo, int $groupId, string $uuid): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM places WHERE uuid = ? AND owner_id = ?');
-    $stmt->execute([$uuid, $ownerId]);
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE uuid = ? AND group_id = ?');
+    $stmt->execute([$uuid, $groupId]);
     return $stmt->fetch() ?: null;
 }
 
-function sync_find_box(PDO $pdo, int $ownerId, string $uuid): ?array
+function sync_find_box(PDO $pdo, int $groupId, string $uuid): ?array
 {
     $stmt = $pdo->prepare(
         'SELECT boxes.* FROM boxes JOIN places ON places.id = boxes.place_id
-         WHERE boxes.uuid = ? AND places.owner_id = ?'
+         WHERE boxes.uuid = ? AND places.group_id = ?'
     );
-    $stmt->execute([$uuid, $ownerId]);
+    $stmt->execute([$uuid, $groupId]);
     return $stmt->fetch() ?: null;
 }
 
-function sync_find_item(PDO $pdo, int $ownerId, string $uuid): ?array
+function sync_find_item(PDO $pdo, int $groupId, string $uuid): ?array
 {
     $stmt = $pdo->prepare(
         'SELECT items.* FROM items
          LEFT JOIN boxes ON boxes.id = items.box_id
          JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
-         WHERE items.uuid = ? AND places.owner_id = ?'
+         WHERE items.uuid = ? AND places.group_id = ?'
     );
-    $stmt->execute([$uuid, $ownerId]);
+    $stmt->execute([$uuid, $groupId]);
     return $stmt->fetch() ?: null;
 }
 
-/** True if $uuid is already used in $table by anyone (so another account's row is never overwritten). */
+/** True if $uuid is already used in $table anywhere (so another group's row is never overwritten). */
 function sync_uuid_taken(PDO $pdo, string $table, string $uuid): bool
 {
     $stmt = $pdo->prepare("SELECT 1 FROM $table WHERE uuid = ?");
@@ -218,10 +226,12 @@ function sync_uuid_taken(PDO $pdo, string $table, string $uuid): bool
 }
 
 /**
- * Applies the phone's changes for $ownerId and returns everything that
- * changed on the server after $body['since'] (server-clock ms).
+ * Applies the phone's changes to group $groupId and returns everything that
+ * changed in it on the server after $body['since'] (server-clock ms). A
+ * view-only member's changes are all skipped as "read only"; they still
+ * receive everything.
  */
-function sync_apply(PDO $pdo, int $ownerId, array $body): array
+function sync_apply(PDO $pdo, int $groupId, array $body, bool $canEdit = true): array
 {
     $since = isset($body['since']) && (is_int($body['since']) || ctype_digit((string)$body['since'])) ? (int)$body['since'] : 0;
     $places = is_array($body['places'] ?? null) ? $body['places'] : [];
@@ -235,7 +245,18 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
     }
 
     $skipped = [];
-    // Tokens assigned server-side when the phone's collided with an existing box.
+    if (!$canEdit) {
+        foreach (['places' => $places, 'boxes' => $boxes, 'items' => $items, 'deleted' => $deleted] as $kind => $rows) {
+            foreach ($rows as $r) {
+                $uuid = is_array($r) ? sync_uuid($r['uuid'] ?? null) : null;
+                if ($uuid !== null) {
+                    $skipped[] = ['kind' => $kind === 'deleted' ? (string)($r['kind'] ?? '') : $kind, 'uuid' => $uuid, 'reason' => 'read only'];
+                }
+            }
+        }
+        $places = $boxes = $items = $deleted = $barcodes = [];
+    }
+
     $pdo->beginTransaction();
     try {
         // 1. Deletes first, so a delete + re-create of the same thing doesn't collide.
@@ -246,8 +267,8 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
                 continue;
             }
             $at = sync_ts($d['deleted_at'] ?? null);
-            $row = $kind === 'places' ? sync_find_place($pdo, $ownerId, $uuid)
-                : ($kind === 'boxes' ? sync_find_box($pdo, $ownerId, $uuid) : sync_find_item($pdo, $ownerId, $uuid));
+            $row = $kind === 'places' ? sync_find_place($pdo, $groupId, $uuid)
+                : ($kind === 'boxes' ? sync_find_box($pdo, $groupId, $uuid) : sync_find_item($pdo, $groupId, $uuid));
             // Last write wins: an edit on the server after the phone's delete keeps the row.
             if ($row && (int)$row['updated_at'] <= $at) {
                 $pdo->prepare("DELETE FROM $kind WHERE id = ?")->execute([(int)$row['id']]);
@@ -262,24 +283,28 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
                 continue;
             }
             $ts = sync_ts($p['updated_at'] ?? null);
-            $row = sync_find_place($pdo, $ownerId, $uuid);
+            $token = sync_token($p['share_token'] ?? null);
+            $row = sync_find_place($pdo, $groupId, $uuid);
             if ($row) {
                 if ((int)$row['updated_at'] >= $ts) {
                     continue; // server copy is as new or newer
                 }
-                $slug = unique_place_slug($pdo, $ownerId, $name, (int)$row['id']);
+                $slug = unique_place_slug($pdo, $groupId, $name, (int)$row['id']);
                 $pdo->prepare('UPDATE places SET name = ?, slug = ?, updated_at = ? WHERE id = ?')
                     ->execute([$name, $slug, $ts, (int)$row['id']]);
             } elseif (sync_uuid_taken($pdo, 'places', $uuid)) {
                 $skipped[] = ['kind' => 'places', 'uuid' => $uuid, 'reason' => 'uuid in use'];
             } else {
-                $slug = unique_place_slug($pdo, $ownerId, $name);
-                $pdo->prepare('INSERT INTO places (owner_id, name, slug, uuid, updated_at) VALUES (?, ?, ?, ?, ?)')
-                    ->execute([$ownerId, $name, $slug, $uuid, $ts]);
+                if ($token === null || find_place_by_token($pdo, $token) !== null) {
+                    $token = new_share_token(); // phone adopts it from the response
+                }
+                $slug = unique_place_slug($pdo, $groupId, $name);
+                $pdo->prepare('INSERT INTO places (group_id, name, slug, share_token, uuid, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+                    ->execute([$groupId, $name, $slug, $token, $uuid, $ts]);
             }
         }
 
-        // 3. Boxes (their place must already exist for this owner).
+        // 3. Boxes (their place must already exist in this group).
         foreach ($boxes as $b) {
             $uuid = is_array($b) ? sync_uuid($b['uuid'] ?? null) : null;
             $name = is_array($b) ? sync_name($b['name'] ?? null) : '';
@@ -287,14 +312,14 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
             if ($uuid === null || $name === '' || $placeUuid === null) {
                 continue;
             }
-            $place = sync_find_place($pdo, $ownerId, $placeUuid);
+            $place = sync_find_place($pdo, $groupId, $placeUuid);
             if (!$place) {
                 $skipped[] = ['kind' => 'boxes', 'uuid' => $uuid, 'reason' => 'place not found'];
                 continue;
             }
             $ts = sync_ts($b['updated_at'] ?? null);
-            $token = (is_string($b['share_token'] ?? null) && preg_match('/^[A-Za-z0-9_-]{8,128}$/', $b['share_token'])) ? $b['share_token'] : null;
-            $row = sync_find_box($pdo, $ownerId, $uuid);
+            $token = sync_token($b['share_token'] ?? null);
+            $row = sync_find_box($pdo, $groupId, $uuid);
             if ($row) {
                 if ((int)$row['updated_at'] >= $ts) {
                     continue;
@@ -326,10 +351,10 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
             $boxId = null;
             $placeId = null;
             if ($boxUuid !== null) {
-                $box = sync_find_box($pdo, $ownerId, $boxUuid);
+                $box = sync_find_box($pdo, $groupId, $boxUuid);
                 $boxId = $box ? (int)$box['id'] : null;
             } elseif ($placeUuid !== null) {
-                $place = sync_find_place($pdo, $ownerId, $placeUuid);
+                $place = sync_find_place($pdo, $groupId, $placeUuid);
                 $placeId = $place ? (int)$place['id'] : null;
             }
             if ($boxId === null && $placeId === null) {
@@ -339,7 +364,7 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
             $rawQty = $i['quantity'] ?? 1;
             $qty = min(IMPORT_MAX_QUANTITY, max(1, is_numeric($rawQty) ? (int)$rawQty : 1));
             $ts = sync_ts($i['updated_at'] ?? null);
-            $row = sync_find_item($pdo, $ownerId, $uuid);
+            $row = sync_find_item($pdo, $groupId, $uuid);
             if ($row) {
                 if ((int)$row['updated_at'] >= $ts) {
                     continue;
@@ -375,25 +400,25 @@ function sync_apply(PDO $pdo, int $ownerId, array $body): array
     $serverTime = now_ms() - 1;
     return [
         'server_time' => $serverTime,
-        'changes' => sync_changes_since($pdo, $ownerId, $since),
+        'changes' => sync_changes_since($pdo, $groupId, $since),
         'skipped' => $skipped,
     ];
 }
 
-function sync_changes_since(PDO $pdo, int $ownerId, int $since): array
+function sync_changes_since(PDO $pdo, int $groupId, int $since): array
 {
-    $stmt = $pdo->prepare('SELECT uuid, name, updated_at FROM places WHERE owner_id = ? AND changed_at > ? ORDER BY id');
-    $stmt->execute([$ownerId, $since]);
+    $stmt = $pdo->prepare('SELECT uuid, name, share_token, updated_at FROM places WHERE group_id = ? AND changed_at > ? ORDER BY id');
+    $stmt->execute([$groupId, $since]);
     $places = array_map(fn($r) => [
-        'uuid' => $r['uuid'], 'name' => $r['name'], 'updated_at' => (int)$r['updated_at'],
+        'uuid' => $r['uuid'], 'name' => $r['name'], 'share_token' => $r['share_token'], 'updated_at' => (int)$r['updated_at'],
     ], $stmt->fetchAll());
 
     $stmt = $pdo->prepare(
         'SELECT boxes.uuid, boxes.name, boxes.share_token, boxes.updated_at, places.uuid AS place_uuid
          FROM boxes JOIN places ON places.id = boxes.place_id
-         WHERE places.owner_id = ? AND boxes.changed_at > ? ORDER BY boxes.id'
+         WHERE places.group_id = ? AND boxes.changed_at > ? ORDER BY boxes.id'
     );
-    $stmt->execute([$ownerId, $since]);
+    $stmt->execute([$groupId, $since]);
     $boxes = array_map(fn($r) => [
         'uuid' => $r['uuid'], 'place_uuid' => $r['place_uuid'], 'name' => $r['name'],
         'share_token' => $r['share_token'], 'updated_at' => (int)$r['updated_at'],
@@ -405,17 +430,17 @@ function sync_changes_since(PDO $pdo, int $ownerId, int $since): array
          FROM items
          LEFT JOIN boxes b ON b.id = items.box_id
          LEFT JOIN places p ON p.id = items.place_id
-         JOIN places owner_place ON owner_place.id = COALESCE(items.place_id, b.place_id)
-         WHERE owner_place.owner_id = ? AND items.changed_at > ? ORDER BY items.id'
+         JOIN places group_place ON group_place.id = COALESCE(items.place_id, b.place_id)
+         WHERE group_place.group_id = ? AND items.changed_at > ? ORDER BY items.id'
     );
-    $stmt->execute([$ownerId, $since]);
+    $stmt->execute([$groupId, $since]);
     $items = array_map(fn($r) => [
         'uuid' => $r['uuid'], 'box_uuid' => $r['box_uuid'], 'place_uuid' => $r['box_uuid'] === null ? $r['place_uuid'] : null,
         'name' => $r['name'], 'quantity' => (int)$r['quantity'], 'updated_at' => (int)$r['updated_at'],
     ], $stmt->fetchAll());
 
     // Tombstones only carry a uuid (never names), so a deleted row can't be
-    // traced back to its owner; the phone ignores uuids it doesn't have.
+    // traced back to its group; the phone ignores uuids it doesn't have.
     $stmt = $pdo->prepare('SELECT kind, uuid, deleted_at FROM sync_tombstones WHERE deleted_at > ? ORDER BY id');
     $stmt->execute([$since]);
     $deleted = array_map(fn($r) => [

@@ -42,6 +42,8 @@ data class BackupPlace(
     val uuid: String? = null,
     val name: String,
     val slug: String? = null,
+    /** Missing in backups made before places had QR codes; a new one is generated on restore. */
+    @SerialName("share_token") val shareToken: String? = null,
     @SerialName("created_at") val createdAt: Long? = null,
     @SerialName("updated_at") val updatedAt: Long? = null,
     val boxes: List<BackupBox> = emptyList(),
@@ -96,7 +98,8 @@ class BackupRepository(
             exportedAt = now(),
             places = places.map { p ->
                 BackupPlace(
-                    uuid = p.uuid, name = p.name, slug = p.slug, createdAt = p.createdAt, updatedAt = p.updatedAt,
+                    uuid = p.uuid, name = p.name, slug = p.slug, shareToken = p.shareToken,
+                    createdAt = p.createdAt, updatedAt = p.updatedAt,
                     boxes = boxes[p.id].orEmpty().map { b ->
                         BackupBox(
                             uuid = b.uuid, name = b.name, slug = b.slug, shareToken = b.shareToken,
@@ -134,6 +137,7 @@ class BackupRepository(
         val t = now()
         val usedUuids = HashSet<String>()
         val usedTokens = HashSet<String>()
+        val usedPlaceTokens = HashSet<String>()
         val usedPlaceSlugs = HashSet<String>()
         fun uuidOf(raw: String?): String =
             raw?.takeIf { it.isNotBlank() && usedUuids.add(it) } ?: UUID.randomUUID().toString().also { usedUuids.add(it) }
@@ -145,9 +149,11 @@ class BackupRepository(
             if (placeName.isEmpty()) continue
             val placeSlug = Slugs.unique(p.slug?.takeIf { it.isNotBlank() } ?: placeName) { it in usedPlaceSlugs }
                 .also { usedPlaceSlugs += it }
+            val placeToken = p.shareToken?.takeIf { BoxLinks.isValidToken(it) && usedPlaceTokens.add(it) }
+                ?: BoxLinks.newShareToken().also { usedPlaceTokens += it }
             val placeId = db.placeDao().insert(
                 PlaceEntity(
-                    uuid = uuidOf(p.uuid), name = placeName, slug = placeSlug,
+                    uuid = uuidOf(p.uuid), name = placeName, slug = placeSlug, shareToken = placeToken,
                     createdAt = p.createdAt ?: t, updatedAt = p.updatedAt ?: t,
                 ),
             )
@@ -157,7 +163,7 @@ class BackupRepository(
                 if (boxName.isEmpty()) continue
                 val boxSlug = Slugs.unique(b.slug?.takeIf { it.isNotBlank() } ?: boxName) { it in usedBoxSlugs }
                     .also { usedBoxSlugs += it }
-                val token = b.shareToken?.takeIf { BoxLinks.tokenFrom(BoxLinks.deepLink(it)) != null && usedTokens.add(it) }
+                val token = b.shareToken?.takeIf { BoxLinks.isValidToken(it) && usedTokens.add(it) }
                     ?: BoxLinks.newShareToken().also { usedTokens += it }
                 val boxId = db.boxDao().insert(
                     BoxEntity(

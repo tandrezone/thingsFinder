@@ -193,6 +193,11 @@ abstract class ContainerViewModel(
         else say(errorMsg(R.string.msg_item_move_failed))
     }
 
+    /** Remove mode's −1. */
+    fun takeOne(id: Long) = launchSafely {
+        inventory.takeOne(id)?.let { left -> say(msg(R.string.msg_item_took_one, left)) }
+    }
+
     fun deleteItem(id: Long) = launchSafely {
         inventory.deleteItem(id)
         say(msg(R.string.msg_item_deleted))

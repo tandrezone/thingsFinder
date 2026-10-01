@@ -15,13 +15,19 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "places",
-    indices = [Index(value = ["slug"], unique = true), Index(value = ["uuid"], unique = true)],
+    indices = [
+        Index(value = ["slug"], unique = true),
+        Index(value = ["uuid"], unique = true),
+        Index(value = ["share_token"], unique = true),
+    ],
 )
 data class PlaceEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val uuid: String,
     val name: String,
     val slug: String,
+    /** Same format as a box's; identifies the place in its add-item / remove-item QR codes. */
+    @ColumnInfo(name = "share_token", defaultValue = "") val shareToken: String,
     @ColumnInfo(name = "created_at") val createdAt: Long,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )

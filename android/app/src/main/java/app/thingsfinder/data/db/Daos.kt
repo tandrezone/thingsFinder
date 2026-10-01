@@ -37,6 +37,12 @@ interface PlaceDao {
     @Query("SELECT COUNT(*) FROM places WHERE slug = :slug AND id != :excludeId")
     suspend fun countSlug(slug: String, excludeId: Long = 0): Int
 
+    @Query("SELECT * FROM places WHERE share_token = :token")
+    suspend fun findByToken(token: String): PlaceEntity?
+
+    @Query("SELECT COUNT(*) FROM places WHERE share_token = :token AND id != :excludeId")
+    suspend fun countToken(token: String, excludeId: Long): Int
+
     @Insert
     suspend fun insert(place: PlaceEntity): Long
 

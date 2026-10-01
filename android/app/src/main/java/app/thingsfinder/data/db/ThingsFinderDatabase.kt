@@ -21,7 +21,7 @@ abstract class ThingsFinderDatabase : RoomDatabase() {
 
     companion object {
         const val FILE_NAME = "thingsfinder.db"
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** v2: sync_tombstones, for cloud sync. */
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -34,11 +34,20 @@ abstract class ThingsFinderDatabase : RoomDatabase() {
             }
         }
 
+        /** v3: places.share_token, for a place's add-item / remove-item QR codes. Existing places get a random one. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `places` ADD COLUMN `share_token` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE `places` SET `share_token` = lower(hex(randomblob(16)))")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_places_share_token` ON `places` (`share_token`)")
+            }
+        }
+
         fun create(context: Context): ThingsFinderDatabase =
             Room.databaseBuilder(context.applicationContext, ThingsFinderDatabase::class.java, FILE_NAME)
                 // Room enables PRAGMA foreign_keys itself when entities declare foreign keys,
                 // so ON DELETE CASCADE behaves exactly like the server's SQLite schema.
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

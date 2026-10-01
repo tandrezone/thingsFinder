@@ -18,4 +18,14 @@ class RulesTest {
         val cleaned = cleanName(emoji)
         assertEquals(200, cleaned.codePointCount(0, cleaned.length))
     }
+
+    @Test fun `account rules match the server's register checks`() {
+        assertEquals(true, AccountRules.validUsername("tiago.a-b_1"))
+        assertEquals(true, AccountRules.validUsername(" tia "))
+        assertEquals(false, AccountRules.validUsername("ti"))
+        assertEquals(false, AccountRules.validUsername("a".repeat(41)))
+        assertEquals(false, AccountRules.validUsername("tiago andre"))
+        assertEquals(false, AccountRules.validPassword("1234567"))
+        assertEquals(true, AccountRules.validPassword("12345678"))
+    }
 }

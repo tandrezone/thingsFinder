@@ -24,11 +24,33 @@ sealed interface ApiResult<out T> {
     data class BadResponse(val message: String) : ApiResult<Nothing>
 }
 
+inline fun <T, R> ApiResult<T>.map(transform: (T) -> R): ApiResult<R> = when (this) {
+    is ApiResult.Success -> ApiResult.Success(transform(value))
+    is ApiResult.Unauthorized -> this
+    is ApiResult.HttpError -> this
+    is ApiResult.NetworkError -> this
+    is ApiResult.BadResponse -> this
+}
+
 /** The thingsFinder server's app endpoints (see api.php / includes/sync.php). */
 interface CloudApi {
     suspend fun login(baseUrl: String, username: String, password: String, deviceName: String): ApiResult<LoginResponse>
+    /** 409 username taken, 403 registration disabled, 400 invalid username/password. */
+    suspend fun register(baseUrl: String, username: String, password: String, deviceName: String): ApiResult<RegisterResponse>
     suspend fun logout(baseUrl: String, token: String): ApiResult<Unit>
     suspend fun sync(baseUrl: String, token: String, request: SyncRequest): ApiResult<SyncResponse>
+
+    // Groups. Owner-only calls answer 403 for members; groups you're not in are 404.
+    suspend fun groups(baseUrl: String, token: String): ApiResult<GroupsResponse>
+    suspend fun group(baseUrl: String, token: String, groupId: Long): ApiResult<GroupDetailResponse>
+    suspend fun createGroup(baseUrl: String, token: String, name: String): ApiResult<RemoteGroup>
+    suspend fun renameGroup(baseUrl: String, token: String, groupId: Long, name: String): ApiResult<RemoteGroup>
+    suspend fun deleteGroup(baseUrl: String, token: String, groupId: Long): ApiResult<Unit>
+    suspend fun resetInvite(baseUrl: String, token: String, groupId: Long): ApiResult<RemoteGroup>
+    suspend fun leaveGroup(baseUrl: String, token: String, groupId: Long): ApiResult<Unit>
+    suspend fun removeMember(baseUrl: String, token: String, groupId: Long, userId: Long): ApiResult<Unit>
+    /** 404 "Invite not found" when neither the token nor name + key match. */
+    suspend fun joinGroup(baseUrl: String, token: String, request: JoinGroupRequest): ApiResult<RemoteGroup>
 }
 
 class OkHttpCloudApi(
@@ -46,6 +68,9 @@ class OkHttpCloudApi(
     override suspend fun login(baseUrl: String, username: String, password: String, deviceName: String) =
         post(baseUrl, "api/auth/login", null, LoginRequest(username, password, deviceName), LoginRequest.serializer(), LoginResponse.serializer())
 
+    override suspend fun register(baseUrl: String, username: String, password: String, deviceName: String) =
+        post(baseUrl, "api/auth/register", null, LoginRequest(username, password, deviceName), LoginRequest.serializer(), RegisterResponse.serializer())
+
     override suspend fun logout(baseUrl: String, token: String): ApiResult<Unit> =
         when (val r = post<Unit, Unit>(baseUrl, "api/auth/logout", token, Unit, null, null)) {
             is ApiResult.Success -> ApiResult.Success(Unit)
@@ -58,7 +83,46 @@ class OkHttpCloudApi(
     override suspend fun sync(baseUrl: String, token: String, request: SyncRequest) =
         post(baseUrl, "api/sync", token, request, SyncRequest.serializer(), SyncResponse.serializer())
 
+    override suspend fun groups(baseUrl: String, token: String) =
+        call<Unit, GroupsResponse>("GET", baseUrl, "api/groups", token, Unit, null, GroupsResponse.serializer())
+
+    override suspend fun group(baseUrl: String, token: String, groupId: Long) =
+        call<Unit, GroupDetailResponse>("GET", baseUrl, "api/groups/$groupId", token, Unit, null, GroupDetailResponse.serializer())
+
+    override suspend fun createGroup(baseUrl: String, token: String, name: String) =
+        post(baseUrl, "api/groups", token, GroupNameRequest(name), GroupNameRequest.serializer(), GroupResponse.serializer()).map { it.group }
+
+    override suspend fun renameGroup(baseUrl: String, token: String, groupId: Long, name: String) =
+        call("PUT", baseUrl, "api/groups/$groupId", token, GroupNameRequest(name), GroupNameRequest.serializer(), GroupResponse.serializer())
+            .map { it.group }
+
+    override suspend fun deleteGroup(baseUrl: String, token: String, groupId: Long) =
+        call<Unit, Unit>("DELETE", baseUrl, "api/groups/$groupId", token, Unit, null, null)
+
+    override suspend fun resetInvite(baseUrl: String, token: String, groupId: Long) =
+        post<Unit, GroupResponse>(baseUrl, "api/groups/$groupId/invite/reset", token, Unit, null, GroupResponse.serializer()).map { it.group }
+
+    override suspend fun leaveGroup(baseUrl: String, token: String, groupId: Long) =
+        post<Unit, Unit>(baseUrl, "api/groups/$groupId/leave", token, Unit, null, null)
+
+    override suspend fun removeMember(baseUrl: String, token: String, groupId: Long, userId: Long) =
+        call<Unit, Unit>("DELETE", baseUrl, "api/groups/$groupId/members/$userId", token, Unit, null, null)
+
+    override suspend fun joinGroup(baseUrl: String, token: String, request: JoinGroupRequest) =
+        post(baseUrl, "api/groups/join", token, request, JoinGroupRequest.serializer(), GroupResponse.serializer()).map { it.group }
+
     private suspend fun <B, R> post(
+        baseUrl: String,
+        path: String,
+        token: String?,
+        body: B,
+        bodySerializer: KSerializer<B>?,
+        responseSerializer: KSerializer<R>?,
+    ): ApiResult<R> = call("POST", baseUrl, path, token, body, bodySerializer, responseSerializer)
+
+    /** [responseSerializer] null: only the status matters, not the reply (e.g. {"deleted":true}). GET / DELETE send no body. */
+    private suspend fun <B, R> call(
+        verb: String,
         baseUrl: String,
         path: String,
         token: String?,
@@ -74,7 +138,13 @@ class OkHttpCloudApi(
                 .header("Accept", "application/json")
                 .header("User-Agent", "thingsFinder-Android")
                 .apply { if (token != null) header("Authorization", "Bearer $token") }
-                .post(payload.toRequestBody(jsonType))
+                .apply {
+                    when (verb) {
+                        "GET" -> get()
+                        "DELETE" -> delete()
+                        else -> method(verb, payload.toRequestBody(jsonType))
+                    }
+                }
                 .build()
             client.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()

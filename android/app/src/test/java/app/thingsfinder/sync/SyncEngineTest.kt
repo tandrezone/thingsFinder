@@ -136,7 +136,7 @@ class SyncEngineTest {
         assertEquals("B", db.placeDao().get(b)!!.name) // edited after the web delete: kept
     }
 
-    @Test fun `401 signs the phone out; disabled or signed out does nothing`() = runBlocking {
+    @Test fun `401 signs the phone out, disabled or signed out does nothing`() = runBlocking {
         api.next = { ApiResult.Unauthorized("Invalid or expired token") }
         assertEquals(SyncOutcome.SignedOut, engine.syncNow())
         assertNull(session.flow.value.token)

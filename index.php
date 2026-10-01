@@ -4,24 +4,30 @@
  *
  * Public routes (no login):
  *   GET/POST  /login                          sign in
+ *   GET/POST  /register                       create an account (unless TF_REGISTRATION=off)
  *   GET/POST  /setup                          create the first account (only until one exists)
  *   POST      /logout                         sign out
  *   GET       /view/{token}                    read-only box contents — what a box's QR code links to
  *
- * Everything else requires login, and is scoped to whichever account is
- * currently "active" (your own by default, or one that shared with you —
- * see includes/auth.php):
+ * Everything else requires login, and is scoped to the active group (see
+ * includes/auth.php and includes/groups.php):
  *   GET/POST  /                              home: list of places, create place
- *   GET       /search?q=...                  search within the active account
+ *   GET       /search?q=...                  search within the active group
  *   GET/POST  /place/{placeSlug}              boxes + place-level items, create/rename/delete
  *   GET/POST  /place/{placeSlug}/{boxSlug}    items inside a box, create/rename/delete
+ *   GET       /add/{token}, /remove/{token}   what a box's/place's add-item and remove-item QR codes
+ *                                             link to: opens it ready to add or remove an item
+ *   GET       /add|remove/{token}/qr.svg|png, label.svg|png   those QR codes and printable labels
  *   GET/POST  /barcodes                       the barcode -> item register: view, add, rename, remove
- *   POST      /switch-context                 switch which account's stuff you're viewing
- *   GET/POST  /people                         who can access your stuff, and at what permission
+ *   POST      /switch-group                   switch which group you're looking at
+ *   GET/POST  /groups                         your groups: create one, join one by name + key
+ *   GET/POST  /groups/{id}                    a group's invite (link, QR, name + key) and members
+ *   GET       /groups/{id}/invite.svg|png     the invite link as a QR code
+ *   GET/POST  /join/{token}                   accept an invite link
  *   GET/POST  /account                        change your own password
  *
- * "Edit" permission is required for every POST above except /switch-context,
- * /login, /setup and /logout; "view" permission is enough for every GET.
+ * "Edit" permission in the active group is required for every POST to /,
+ * /place/... and /barcodes; "view" permission is enough for every GET.
  */
 
 require_once __DIR__ . '/includes/db.php';
@@ -55,24 +61,17 @@ function layout(string $title, string $body, array $breadcrumbs = [], ?array $na
   <a class="brand" href="/"><span class="brand-mark">📦</span> thingsFinder</a>
   <?php if ($nav): ?>
     <details class="card-menu context-switcher">
-      <summary aria-label="Switch account"><?= icon('users', 15) ?><span class="btn-label"><?= h($nav['contextLabel']) ?></span></summary>
+      <summary aria-label="Switch group"><?= icon('users', 15) ?><span class="btn-label"><?= h($nav['groupName']) ?></span></summary>
       <div class="card-menu-body">
-        <?php if ((int)$nav['ownerId'] !== (int)$nav['userId']): ?>
-          <form method="post" action="/switch-context" class="inline-form">
-            <input type="hidden" name="owner_id" value="<?= (int)$nav['userId'] ?>">
-            <button type="submit" class="secondary">My stuff</button>
-          </form>
-        <?php endif; ?>
-        <?php foreach ($nav['shares'] as $s): ?>
-          <?php if ((int)$s['owner_id'] === (int)$nav['ownerId']) { continue; } ?>
-          <form method="post" action="/switch-context" class="inline-form">
-            <input type="hidden" name="owner_id" value="<?= (int)$s['owner_id'] ?>">
-            <button type="submit" class="secondary"><?= h($s['owner_username']) ?>'s stuff · <?= h($s['permission']) ?></button>
+        <?php foreach ($nav['groups'] as $g): ?>
+          <?php if ((int)$g['id'] === (int)$nav['groupId']) { continue; } ?>
+          <form method="post" action="/switch-group" class="inline-form">
+            <input type="hidden" name="group_id" value="<?= (int)$g['id'] ?>">
+            <input type="hidden" name="next" value="/">
+            <button type="submit" class="secondary"><?= h($g['name']) ?><?= $g['permission'] === 'view' ? ' · view only' : '' ?></button>
           </form>
         <?php endforeach; ?>
-        <?php if (!$nav['shares']): ?>
-          <p class="meta">Nobody has shared their stuff with you yet.</p>
-        <?php endif; ?>
+        <a class="btn secondary" href="/groups"><?= icon('users', 14) ?>Manage groups</a>
       </div>
     </details>
     <a class="btn btn-ghost topbar-link" href="/barcodes"><?= icon('barcode', 15) ?><span class="btn-label">Barcodes</span></a>
@@ -88,7 +87,7 @@ function layout(string $title, string $body, array $breadcrumbs = [], ?array $na
     <details class="card-menu">
       <summary aria-label="Account menu"><?= icon('user', 15) ?><span class="btn-label"><?= h($nav['username']) ?></span></summary>
       <div class="card-menu-body">
-        <a class="btn secondary" href="/people"><?= icon('users', 14) ?>People</a>
+        <a class="btn secondary" href="/groups"><?= icon('users', 14) ?>Groups</a>
         <a class="btn secondary" href="/account"><?= icon('lock', 14) ?>Account</a>
         <form method="post" action="/logout">
           <button type="submit" class="danger"><?= icon('log-out', 14) ?>Log out</button>
@@ -158,16 +157,72 @@ function render_error(int $status, string $message, ?array $nav = null): void
     exit;
 }
 
+/** The add/remove QR codes' landing URL for a box or place share token, e.g. https://host/add/{token}. */
+function action_qr_url(string $action, string $token): string
+{
+    return base_url() . '/' . $action . '/' . $token;
+}
+
+/** 'add' or 'remove' while a box/place page was opened from one of its QR codes (?mode=, or carried through a POST); '' otherwise. */
+function item_mode(): string
+{
+    $mode = (string)($_POST['mode'] ?? $_GET['mode'] ?? '');
+    return in_array($mode, ['add', 'remove'], true) ? $mode : '';
+}
+
+function item_mode_query(string $mode): string
+{
+    return $mode !== '' ? '?mode=' . $mode . '#' . ($mode === 'add' ? 'add-item' : 'items') : '';
+}
+
+/**
+ * The "Add item" and "Remove item" QR codes of a box or place ($kind),
+ * with downloads for the code alone and a printable label. Scanning one
+ * opens /add/{token} or /remove/{token}: the box/place, ready to add, or
+ * to take something out. Only shown to members who can edit.
+ */
+function render_action_qr_section(string $token, string $kind, bool $canEdit): string
+{
+    if (!$canEdit) {
+        return '';
+    }
+    ob_start();
+    ?>
+    <h2>Add &amp; remove codes</h2>
+    <p class="meta">Stick these on the <?= $kind ?>: scanning one opens it straight at "add an item" or "take something out". They need a login with access to this group — the thingsFinder Android app understands them too.</p>
+    <div class="qr-pair">
+      <?php foreach (['add' => ['plus', 'Add an item'], 'remove' => ['trash', 'Remove an item']] as $action => [$iconName, $label]): ?>
+        <?php $url = action_qr_url($action, $token); ?>
+        <div class="qr-block">
+          <div class="qr-image"><?= qrcode_svg_markup($url, 4) ?></div>
+          <div class="qr-info">
+            <p class="card-title"><?= icon($iconName, 15) ?> <?= $label ?></p>
+            <p class="meta"><code><?= h($url) ?></code></p>
+            <div class="row-actions">
+              <a class="btn secondary" href="/<?= $action ?>/<?= h($token) ?>/qr.svg" download><?= icon('download', 14) ?>QR</a>
+              <a class="btn secondary" href="/<?= $action ?>/<?= h($token) ?>/label.svg" download><?= icon('printer', 14) ?>Label SVG</a>
+              <a class="btn secondary" href="/<?= $action ?>/<?= h($token) ?>/label.png" download><?= icon('printer', 14) ?>PNG</a>
+            </div>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    </div>
+    <?php
+    return (string)ob_get_clean();
+}
+
 /**
  * Shared handling for the item-related POST actions. Items can now live
  * directly in a place OR inside a box, so this is called from both the
  * place page and the box page — exactly one of $boxId/$placeId is non-null.
  * Returns true if $action was item-related (caller should stop looking at
- * its own actions and redirect); false otherwise. $ownerId scopes
- * move_item's destination picker to the active account.
+ * its own actions and redirect); false otherwise. $groupId scopes
+ * move_item's destination picker to the active group. Edits and deletes
+ * only touch items that are in this very box/place.
  */
-function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId, int $ownerId): bool
+function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId, int $groupId): bool
 {
+    $inHere = $boxId !== null ? 'box_id = ' . $boxId : 'place_id = ' . (int)$placeId;
     if ($action === 'create_item') {
         $name = trim($_POST['name'] ?? '');
         $barcode = trim($_POST['barcode'] ?? '');
@@ -214,7 +269,7 @@ function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId
         $name = trim($_POST['name'] ?? '');
         $quantity = max(1, (int)($_POST['quantity'] ?? 1));
         if ($id && $name !== '') {
-            $pdo->prepare('UPDATE items SET name = ?, quantity = ? WHERE id = ?')->execute([$name, $quantity, $id]);
+            $pdo->prepare("UPDATE items SET name = ?, quantity = ? WHERE id = ? AND $inHere")->execute([$name, $quantity, $id]);
             flash_set('Item updated.', 'success');
         }
         return true;
@@ -222,15 +277,30 @@ function handle_item_action(PDO $pdo, string $action, ?int $boxId, ?int $placeId
     if ($action === 'delete_item') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id) {
-            $pdo->prepare('DELETE FROM items WHERE id = ?')->execute([$id]);
+            $pdo->prepare("DELETE FROM items WHERE id = ? AND $inHere")->execute([$id]);
             flash_set('Item deleted.', 'success');
+        }
+        return true;
+    }
+    // "Take one out" from the remove-item QR flow: one less, or gone at the last one.
+    if ($action === 'take_one') {
+        $id = (int)($_POST['id'] ?? 0);
+        $stmt = $pdo->prepare("SELECT name, quantity FROM items WHERE id = ? AND $inHere");
+        $stmt->execute([$id]);
+        $item = $stmt->fetch();
+        if ($item && (int)$item['quantity'] > 1) {
+            $pdo->prepare('UPDATE items SET quantity = quantity - 1 WHERE id = ?')->execute([$id]);
+            flash_set('Took one "' . $item['name'] . '" out — ' . ((int)$item['quantity'] - 1) . ' left.', 'success');
+        } elseif ($item) {
+            $pdo->prepare('DELETE FROM items WHERE id = ?')->execute([$id]);
+            flash_set('Removed "' . $item['name'] . '" — that was the last one.', 'success');
         }
         return true;
     }
     if ($action === 'move_item') {
         $id = (int)($_POST['id'] ?? 0);
         $destination = (string)($_POST['destination'] ?? '');
-        if ($id && move_item_to($pdo, $id, $ownerId, $destination)) {
+        if ($id && move_item_to($pdo, $id, $groupId, $destination)) {
             flash_set('Item moved.', 'success');
         } else {
             flash_set('Couldn\'t move that item — pick a valid destination.', 'error');
@@ -427,12 +497,20 @@ function render_json_import_section(string $containerLabel = ''): string
  * pass [] when $canEdit is false, since it's unused then.
  * $containerLabel ("Kitchen / Drawer 2") is only used to give the copyable
  * photo-import prompt a bit of context; blank is fine.
+ * $mode comes from the add-item / remove-item QR codes: 'add' opens the
+ * add-item tile ready to type or scan; 'remove' puts a "take one out" and
+ * a "remove" button on every item, with $exitUrl leading back to normal.
  */
-function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit, array $moveDestinations = [], string $containerLabel = ''): string
+function render_items_section(array $items, string $pendingBarcode, string $pendingName, bool $canEdit, array $moveDestinations = [], string $containerLabel = '', string $mode = '', string $exitUrl = ''): string
 {
+    $removing = $mode === 'remove' && $canEdit;
+    $adding = $mode === 'add' && $canEdit;
     ob_start();
     ?>
-    <h2>Items</h2>
+    <h2 id="items">Items</h2>
+    <?php if ($removing): ?>
+      <div class="flash flash-info mode-banner"><?= icon('trash', 17) ?><span>Taking something out? Tap <strong>−1</strong> on it, or <strong>Remove</strong> to take all of them. <a href="<?= h($exitUrl) ?>">Done</a></span></div>
+    <?php endif; ?>
     <?php if (!$items): ?>
       <div class="empty-state">
         <?= icon('box', 28) ?>
@@ -447,7 +525,22 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
               <span class="card-title"><?= h($it['name']) ?></span>
               <?php if ((int)$it['quantity'] > 1): ?><span class="qty-badge">×<?= (int)$it['quantity'] ?></span><?php endif; ?>
             </div>
-            <?php if ($canEdit): ?>
+            <?php if ($removing): ?>
+            <div class="row-actions">
+              <form method="post" class="inline-form">
+                <input type="hidden" name="action" value="take_one">
+                <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+                <input type="hidden" name="mode" value="remove">
+                <button type="submit" class="secondary" aria-label="Take one <?= h($it['name']) ?> out">−1</button>
+              </form>
+              <form method="post" class="inline-form" onsubmit="return confirm('Remove <?= h(addslashes($it['name'])) ?>?');">
+                <input type="hidden" name="action" value="delete_item">
+                <input type="hidden" name="id" value="<?= (int)$it['id'] ?>">
+                <input type="hidden" name="mode" value="remove">
+                <button type="submit" class="danger"><?= icon('trash', 14) ?>Remove</button>
+              </form>
+            </div>
+            <?php elseif ($canEdit): ?>
             <details class="card-menu">
               <summary aria-label="Manage item"><?= icon('dots', 16) ?></summary>
               <div class="card-menu-body">
@@ -490,12 +583,13 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
           </div>
         </li>
       <?php endforeach; ?>
-      <?php if ($canEdit): ?>
-      <li class="card add-card">
-        <details<?= ($pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
+      <?php if ($canEdit && !$removing): ?>
+      <li class="card add-card" id="add-item">
+        <details<?= ($adding || $pendingBarcode !== '' || $pendingName !== '') ? ' open' : '' ?>>
           <summary><?= icon('plus', 15) ?>Add an item</summary>
           <form method="post" class="add-item-form">
             <input type="hidden" name="action" value="create_item">
+            <?php if ($adding): ?><input type="hidden" name="mode" value="add"><?php endif; ?>
             <div class="barcode-row">
               <input type="text" name="barcode" value="<?= h($pendingBarcode) ?>" placeholder="Barcode — scan or type" autocomplete="off" inputmode="numeric">
               <button type="button" class="secondary scan-btn" hidden><?= icon('camera', 14) ?>Scan</button>
@@ -503,7 +597,7 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
             <p class="scan-support-note meta" hidden></p>
             <p class="scan-hint meta" hidden></p>
             <div class="name-qty-row">
-              <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun" class="name-input">
+              <input type="text" name="name" value="<?= h($pendingName) ?>" placeholder="e.g. Hot glue gun" class="name-input"<?= $adding ? ' autofocus' : '' ?>>
               <input type="number" name="quantity" value="1" min="1" class="qty-input" title="Quantity" aria-label="Quantity">
             </div>
             <button type="submit">Add</button>
@@ -516,7 +610,7 @@ function render_items_section(array $items, string $pendingBarcode, string $pend
       </li>
       <?php endif; ?>
     </ul>
-    <?php if ($canEdit): ?>
+    <?php if ($canEdit && !$removing): ?>
     <p class="meta">Know a barcode already? Scan it and thingsFinder either adds the item it remembers, or checks free barcode databases for a name to suggest — confirm or edit it once and it's remembered for next time. Manage all associations on the <a href="/barcodes">barcode register</a>.</p>
     <?= render_json_import_section($containerLabel) ?>
     <?php endif; ?>
@@ -669,15 +763,13 @@ if ($segments === ['setup']) {
         $username = trim($_POST['username'] ?? '');
         $password = (string)($_POST['password'] ?? '');
         $confirm = (string)($_POST['password_confirm'] ?? '');
-        if ($username === '' || $password === '') {
-            $error = 'Choose a username and password.';
-        } elseif ($password !== $confirm) {
+        if ($password !== $confirm) {
             $error = 'Passwords don\'t match.';
-        } elseif (strlen($password) < 8) {
-            $error = 'Password must be at least 8 characters.';
+        } elseif (($problem = validate_new_account($pdo, $username, $password)) !== null) {
+            $error = $problem;
         } else {
-            $userId = create_user($pdo, $username, $password);
-            adopt_orphan_places($pdo, $userId); // upgrading from a version with no login: your existing places become yours
+            [$userId, $groupId] = register_user($pdo, $username, $password);
+            adopt_orphan_places($pdo, $groupId); // upgrading from a version with no login: your existing places become yours
             login_user($userId);
             flash_set('Welcome to thingsFinder!', 'success');
             redirect('/');
@@ -687,7 +779,7 @@ if ($segments === ['setup']) {
     ?>
     <div class="auth-card">
       <h1>Set up thingsFinder</h1>
-      <p class="page-subtitle">Create the first account. You can invite others to see or edit your stuff later, from People.</p>
+      <p class="page-subtitle">Create the first account. You can invite others into your group later, from Groups.</p>
       <?php if ($error): ?><p class="flash flash-error"><?= icon('alert', 16) ?><span><?= h($error) ?></span></p><?php endif; ?>
       <form method="post" class="stack-form-v">
         <label>Username<input type="text" name="username" value="<?= h($_POST['username'] ?? '') ?>" autofocus required></label>
@@ -699,6 +791,12 @@ if ($segments === ['setup']) {
     <?php
     layout_public('Set up', ob_get_clean());
     exit;
+}
+
+/** Where to go after logging in or registering: a local path from ?next=/POST next, else home. */
+function safe_next(string $next): string
+{
+    return ($next !== '' && $next[0] === '/' && substr($next, 0, 2) !== '//') ? $next : '/';
 }
 
 // -------------------------------------------------------------------------
@@ -718,12 +816,11 @@ if ($segments === ['login']) {
         $user = find_user_by_username($pdo, $username);
         if ($user && password_verify($password, $user['password_hash'])) {
             login_user((int)$user['id']);
-            $next = (string)($_POST['next'] ?? '/');
-            redirect($next !== '' && $next[0] === '/' ? $next : '/');
+            redirect(safe_next((string)($_POST['next'] ?? '/')));
         }
         $error = 'Wrong username or password.';
     }
-    $next = (string)($_GET['next'] ?? '');
+    $next = (string)($_GET['next'] ?? $_POST['next'] ?? '');
     ob_start();
     ?>
     <div class="auth-card">
@@ -735,9 +832,65 @@ if ($segments === ['login']) {
         <label>Password<input type="password" name="password" required></label>
         <button type="submit">Log in</button>
       </form>
+      <?php if (registration_enabled()): ?>
+        <p class="meta auth-switch">New here? <a href="/register<?= $next !== '' ? '?next=' . rawurlencode($next) : '' ?>">Create an account</a></p>
+      <?php endif; ?>
     </div>
     <?php
     layout_public('Log in', ob_get_clean());
+    exit;
+}
+
+// -------------------------------------------------------------------------
+// Route: /register — open sign-up. Every new account gets its own personal
+// group; an invite link (?next=/join/...) carries through so they land in
+// the group they were invited to.
+// -------------------------------------------------------------------------
+if ($segments === ['register']) {
+    if (!has_any_users($pdo)) {
+        redirect('/setup');
+    }
+    if (current_user_id() !== null) {
+        redirect('/');
+    }
+    $next = (string)($_GET['next'] ?? $_POST['next'] ?? '');
+    if (!registration_enabled()) {
+        flash_set('Sign-up is turned off on this server — ask its admin for an account.', 'error');
+        redirect('/login' . ($next !== '' ? '?next=' . rawurlencode($next) : ''));
+    }
+    $error = '';
+    if ($method === 'POST') {
+        $username = trim($_POST['username'] ?? '');
+        $password = (string)($_POST['password'] ?? '');
+        $confirm = (string)($_POST['password_confirm'] ?? '');
+        if ($password !== $confirm) {
+            $error = 'Passwords don\'t match.';
+        } elseif (($problem = validate_new_account($pdo, $username, $password)) !== null) {
+            $error = $problem;
+        } else {
+            [$userId] = register_user($pdo, $username, $password);
+            login_user($userId);
+            flash_set('Welcome to thingsFinder, ' . $username . '!', 'success');
+            redirect(safe_next($next));
+        }
+    }
+    ob_start();
+    ?>
+    <div class="auth-card">
+      <h1>Create an account</h1>
+      <p class="page-subtitle">You'll get your own group for your stuff, and can join other people's groups with an invite.</p>
+      <?php if ($error): ?><p class="flash flash-error"><?= icon('alert', 16) ?><span><?= h($error) ?></span></p><?php endif; ?>
+      <form method="post" class="stack-form-v">
+        <input type="hidden" name="next" value="<?= h($next) ?>">
+        <label>Username<input type="text" name="username" value="<?= h($_POST['username'] ?? '') ?>" autofocus required minlength="3" maxlength="40" pattern="[A-Za-z0-9._\-]+" autocomplete="username"></label>
+        <label>Password<input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+        <label>Confirm password<input type="password" name="password_confirm" required minlength="8" autocomplete="new-password"></label>
+        <button type="submit">Create account</button>
+      </form>
+      <p class="meta auth-switch">Already have one? <a href="/login<?= $next !== '' ? '?next=' . rawurlencode($next) : '' ?>">Log in</a></p>
+    </div>
+    <?php
+    layout_public('Create account', ob_get_clean());
     exit;
 }
 
@@ -757,6 +910,10 @@ if ($segments === ['logout']) {
 if (!has_any_users($pdo)) {
     redirect('/setup');
 }
+if (current_user_id() === null && count($segments) === 2 && $segments[0] === 'join') {
+    // An invite link opened by someone without an account yet: let them sign up first.
+    redirect((registration_enabled() ? '/register' : '/login') . '?next=' . rawurlencode('/join/' . $segments[1]));
+}
 require_login();
 
 $currentUser = current_user($pdo);
@@ -765,143 +922,382 @@ if (!$currentUser) {
     logout_user();
     redirect('/login');
 }
-$ownerId = active_owner_id($pdo);
-$owner = ((int)$ownerId === (int)$currentUser['id']) ? $currentUser : find_user_by_id($pdo, $ownerId);
+$userId = (int)$currentUser['id'];
+$groupId = active_group_id($pdo);
+$group = find_membership($pdo, $groupId, $userId);
 $canEdit = can_edit($pdo);
-$sharesReceived = list_shares_received_by($pdo, (int)$currentUser['id']);
 $nav = [
-    'userId' => (int)$currentUser['id'],
+    'userId' => $userId,
     'username' => $currentUser['username'],
-    'ownerId' => (int)$ownerId,
-    'contextLabel' => ((int)$ownerId === (int)$currentUser['id'])
-        ? 'My stuff'
-        : ($owner['username'] ?? 'Shared') . "'s stuff",
-    'shares' => $sharesReceived,
+    'groupId' => $groupId,
+    'groupName' => $group['name'],
+    'groups' => list_user_groups($pdo, $userId),
 ];
 
 // -------------------------------------------------------------------------
-// Route: /switch-context
+// Route: /switch-group
 // -------------------------------------------------------------------------
-if ($segments === ['switch-context']) {
+if ($segments === ['switch-group']) {
     if ($method === 'POST') {
-        $requested = (int)($_POST['owner_id'] ?? 0);
-        if ($requested && set_active_owner($pdo, $requested)) {
-            flash_set('Switched.', 'success');
+        $requested = (int)($_POST['group_id'] ?? 0);
+        if ($requested && set_active_group($pdo, $requested)) {
+            flash_set('Switched to "' . find_membership($pdo, $requested, $userId)['name'] . '".', 'success');
         } else {
-            flash_set('You don\'t have access to that account.', 'error');
+            flash_set('You\'re not in that group.', 'error');
         }
     }
-    $back = (string)($_POST['next'] ?? '/');
-    redirect($back !== '' && $back[0] === '/' ? $back : '/');
+    redirect(safe_next((string)($_POST['next'] ?? '/')));
+}
+
+// The old sharing page lives on as groups.
+if ($segments === ['people']) {
+    redirect('/groups');
 }
 
 // -------------------------------------------------------------------------
-// Route: /people — who can access *your own* stuff (not the account
-// you're currently viewing — sharing is always about what you own).
+// Route: /join/{token} — accept an invite link (or its QR code)
 // -------------------------------------------------------------------------
-if ($segments === ['people']) {
-    $myId = (int)$currentUser['id'];
+if (count($segments) === 2 && $segments[0] === 'join') {
+    $invited = find_group_by_invite_token($pdo, $segments[1]);
+    if (!$invited) {
+        render_error(404, 'This invite link is invalid or was replaced by a new one — ask for a fresh invite.', $nav);
+    }
+    $invitedId = (int)$invited['id'];
+    if (find_membership($pdo, $invitedId, $userId)) {
+        set_active_group($pdo, $invitedId);
+        flash_set('You\'re already in "' . $invited['name'] . '".', 'info');
+        redirect('/');
+    }
+    if ($method === 'POST') {
+        add_group_member($pdo, $invitedId, $userId);
+        set_active_group($pdo, $invitedId);
+        flash_set('You joined "' . $invited['name'] . '" — everything in it is shared with you now.', 'success');
+        redirect('/');
+    }
+    $memberCount = count(list_group_members($pdo, $invitedId));
+    ob_start();
+    ?>
+    <div class="auth-card">
+      <h1>Join "<?= h($invited['name']) ?>"?</h1>
+      <p class="page-subtitle">You've been invited to a group with <?= $memberCount ?> member<?= $memberCount === 1 ? '' : 's' ?>. Everyone in it can see, add, edit and remove its places, boxes and items.</p>
+      <form method="post" class="stack-form-v">
+        <button type="submit"><?= icon('users', 14) ?>Join group</button>
+      </form>
+      <p class="meta auth-switch"><a href="/">Not now</a></p>
+    </div>
+    <?php
+    layout('Join group', ob_get_clean(), ['Join group' => null], $nav);
+    exit;
+}
+
+// -------------------------------------------------------------------------
+// Route: /groups — every group you're in; create one, or join one by its
+// name + key (the typed-in alternative to an invite link)
+// -------------------------------------------------------------------------
+if ($segments === ['groups']) {
     if ($method === 'POST') {
         $action = $_POST['action'] ?? '';
-        if ($action === 'add_person') {
-            $username = trim($_POST['username'] ?? '');
-            $password = (string)($_POST['password'] ?? '');
-            $permission = ($_POST['permission'] ?? 'view') === 'edit' ? 'edit' : 'view';
-            $existing = $username !== '' ? find_user_by_username($pdo, $username) : null;
-            if ($username === '') {
-                flash_set('Enter a username.', 'error');
-            } elseif ($existing && (int)$existing['id'] === $myId) {
-                flash_set('That\'s your own account.', 'error');
-            } elseif ($existing) {
-                upsert_share($pdo, $myId, (int)$existing['id'], $permission);
-                flash_set('Granted "' . $existing['username'] . '" ' . $permission . ' access.', 'success');
-            } elseif ($password === '' || strlen($password) < 8) {
-                flash_set('That username doesn\'t exist yet — set a password (8+ characters) to create it.', 'error');
-            } else {
-                $newId = create_user($pdo, $username, $password);
-                upsert_share($pdo, $myId, $newId, $permission);
-                flash_set('Created "' . $username . '" with ' . $permission . ' access. Share their username/password with them.', 'success');
+        if ($action === 'create_group') {
+            $name = clean_group_name($_POST['name'] ?? '');
+            if ($name === '') {
+                flash_set('Give the group a name.', 'error');
+                redirect('/groups');
             }
-        } elseif ($action === 'update_permission') {
-            $userId = (int)($_POST['user_id'] ?? 0);
-            $permission = ($_POST['permission'] ?? 'view') === 'edit' ? 'edit' : 'view';
-            if ($userId) {
-                upsert_share($pdo, $myId, $userId, $permission);
-                flash_set('Updated.', 'success');
-            }
-        } elseif ($action === 'revoke') {
-            $userId = (int)($_POST['user_id'] ?? 0);
-            if ($userId) {
-                delete_share($pdo, $myId, $userId);
-                flash_set('Access removed.', 'success');
-            }
+            $newId = create_group($pdo, $userId, $name);
+            set_active_group($pdo, $newId);
+            flash_set('Group "' . $name . '" created — invite people from here.', 'success');
+            redirect('/groups/' . $newId);
         }
-        redirect('/people');
+        if ($action === 'join_group') {
+            $found = find_group_by_name_and_key($pdo, (string)($_POST['name'] ?? ''), (string)($_POST['key'] ?? ''));
+            if (!$found) {
+                usleep(300000); // keys are short — slow down guessing a little
+                flash_set('No group matches that name and key — check both with whoever invited you.', 'error');
+                redirect('/groups');
+            }
+            add_group_member($pdo, (int)$found['id'], $userId);
+            set_active_group($pdo, (int)$found['id']);
+            flash_set('You joined "' . $found['name'] . '".', 'success');
+            redirect('/');
+        }
+        redirect('/groups');
     }
-
-    $granted = list_shares_granted_by($pdo, $myId);
 
     ob_start();
     ?>
-    <h1>People</h1>
-    <p class="page-subtitle">Everyone listed here can see everything you own; "edit" means they can add, rename, and delete too.</p>
-    <?php if (!$granted): ?>
-      <div class="empty-state">
-        <?= icon('users', 28) ?>
-        <p>Nobody else has access to your stuff yet.</p>
-      </div>
-    <?php endif; ?>
+    <h1>Groups</h1>
+    <p class="page-subtitle">Everyone in a group shares its places, boxes and items — and can add, edit and remove them.</p>
     <ul class="card-list">
-      <?php foreach ($granted as $s): ?>
+      <?php foreach ($nav['groups'] as $g): ?>
         <li class="card">
           <div class="card-head">
             <div class="card-body">
-              <span class="card-title"><?= h($s['username']) ?></span>
-              <span class="meta"><?= h($s['permission']) ?> access</span>
+              <a class="card-title" href="/groups/<?= (int)$g['id'] ?>"><?= h($g['name']) ?></a>
+              <span class="meta">
+                <?= (int)$g['member_count'] ?> member<?= (int)$g['member_count'] === 1 ? '' : 's' ?>
+                · <?= $g['role'] === 'owner' ? 'you own it' : ($g['permission'] === 'view' ? 'view only' : 'member') ?>
+                <?php if ((int)$g['id'] === $groupId): ?> · <strong>current</strong><?php endif; ?>
+              </span>
             </div>
-            <details class="card-menu">
-              <summary aria-label="Manage access"><?= icon('dots', 16) ?></summary>
-              <div class="card-menu-body">
-                <form method="post" class="inline-form">
-                  <input type="hidden" name="action" value="update_permission">
-                  <input type="hidden" name="user_id" value="<?= (int)$s['user_id'] ?>">
-                  <select name="permission">
-                    <option value="view" <?= $s['permission'] === 'view' ? 'selected' : '' ?>>View only</option>
-                    <option value="edit" <?= $s['permission'] === 'edit' ? 'selected' : '' ?>>Can edit</option>
-                  </select>
-                  <button type="submit" class="secondary"><?= icon('check', 14) ?>Save</button>
-                </form>
-                <form method="post" class="inline-form" onsubmit="return confirm('Remove this person\'s access?');">
-                  <input type="hidden" name="action" value="revoke">
-                  <input type="hidden" name="user_id" value="<?= (int)$s['user_id'] ?>">
-                  <button type="submit" class="danger"><?= icon('trash', 14) ?>Remove</button>
-                </form>
-              </div>
-            </details>
+            <?php if ((int)$g['id'] !== $groupId): ?>
+            <form method="post" action="/switch-group" class="inline-form">
+              <input type="hidden" name="group_id" value="<?= (int)$g['id'] ?>">
+              <button type="submit" class="secondary">Open</button>
+            </form>
+            <?php endif; ?>
           </div>
         </li>
       <?php endforeach; ?>
       <li class="card add-card">
         <details>
-          <summary><?= icon('plus', 15) ?>Add a person</summary>
-          <form method="post" class="stack-form-v">
-            <input type="hidden" name="action" value="add_person">
-            <label>Username<input type="text" name="username" placeholder="e.g. their name" required></label>
-            <label>Password <span class="meta">(only needed if this username doesn't exist yet)</span><input type="password" name="password" placeholder="Leave blank for an existing account" minlength="8"></label>
-            <label>Permission
-              <select name="permission">
-                <option value="view">View only</option>
-                <option value="edit">Can edit</option>
-              </select>
-            </label>
-            <button type="submit">Add</button>
+          <summary><?= icon('plus', 15) ?>Create a group</summary>
+          <form method="post">
+            <input type="hidden" name="action" value="create_group">
+            <input type="text" name="name" placeholder="e.g. Family, Workshop" required maxlength="<?= GROUP_NAME_MAX_LENGTH ?>">
+            <button type="submit">Create</button>
           </form>
+        </details>
+      </li>
+      <li class="card add-card">
+        <details>
+          <summary><?= icon('users', 15) ?>Join a group with its name and key</summary>
+          <form method="post" class="stack-form-v">
+            <input type="hidden" name="action" value="join_group">
+            <label>Group name<input type="text" name="name" required></label>
+            <label>Key<input type="text" name="key" placeholder="XXXX-XXXX" required autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+            <button type="submit">Join</button>
+          </form>
+          <p class="meta">Got a link or QR code instead? Just open it.</p>
         </details>
       </li>
     </ul>
     <?php
-    layout('People', ob_get_clean(), ['People' => null], $nav);
+    layout('Groups', ob_get_clean(), ['Groups' => null], $nav);
     exit;
+}
+
+// -------------------------------------------------------------------------
+// Route: /groups/{id} — one group: its invite and members. Owners can
+// rename it, replace the invite, change or remove members, and delete it.
+// -------------------------------------------------------------------------
+if (count($segments) >= 2 && $segments[0] === 'groups') {
+    $shownId = (int)$segments[1];
+    $shown = find_membership($pdo, $shownId, $userId);
+    if (!$shown) {
+        render_error(404, 'You\'re not in that group.', $nav);
+    }
+    $isOwner = $shown['role'] === 'owner';
+    $inviteUrl = group_invite_url($shown);
+
+    // /groups/{id}/invite.svg | invite.png — the invite link as a QR code
+    if (count($segments) === 3 && in_array($segments[2], ['invite.svg', 'invite.png'], true)) {
+        if ($shown['permission'] !== 'edit') {
+            render_error(403, 'Only members who can edit can invite people.', $nav);
+        }
+        $segments[2] === 'invite.png' ? qrcode_send_png($inviteUrl) : qrcode_send_svg($inviteUrl);
+        exit;
+    }
+    if (count($segments) !== 2) {
+        render_error(404, 'Page not found.', $nav);
+    }
+
+    if ($method === 'POST') {
+        $action = $_POST['action'] ?? '';
+        if ($action === 'leave_group' && !$isOwner) {
+            remove_group_member($pdo, $shownId, $userId);
+            flash_set('You left "' . $shown['name'] . '".', 'success');
+            redirect('/groups');
+        }
+        if (!$isOwner) {
+            flash_set('Only the group\'s owner can do that.', 'error');
+            redirect('/groups/' . $shownId);
+        }
+        if ($action === 'rename_group') {
+            $name = clean_group_name($_POST['name'] ?? '');
+            if ($name !== '') {
+                rename_group($pdo, $shownId, $name);
+                flash_set('Group renamed.', 'success');
+            }
+        } elseif ($action === 'reset_invite') {
+            reset_group_invite($pdo, $shownId);
+            flash_set('New invite link and key made — the old ones no longer work.', 'success');
+        } elseif ($action === 'set_permission') {
+            set_member_permission($pdo, $shownId, (int)($_POST['user_id'] ?? 0), (string)($_POST['permission'] ?? 'edit'));
+            flash_set('Updated.', 'success');
+        } elseif ($action === 'remove_member') {
+            $memberId = (int)($_POST['user_id'] ?? 0);
+            if ($memberId !== $userId) {
+                remove_group_member($pdo, $shownId, $memberId);
+                flash_set('Removed from the group.', 'success');
+            }
+        } elseif ($action === 'delete_group') {
+            if (trim((string)($_POST['confirm_name'] ?? '')) !== $shown['name']) {
+                flash_set('Type the group\'s exact name to delete it.', 'error');
+                redirect('/groups/' . $shownId);
+            }
+            delete_group($pdo, $shownId);
+            flash_set('Group "' . $shown['name'] . '" and everything in it were deleted.', 'success');
+            redirect('/groups');
+        }
+        redirect('/groups/' . $shownId);
+    }
+
+    $members = list_group_members($pdo, $shownId);
+    ob_start();
+    ?>
+    <div class="card-head">
+      <div class="card-body">
+        <h1><?= h($shown['name']) ?></h1>
+        <p class="meta"><?= count($members) ?> member<?= count($members) === 1 ? '' : 's' ?> · <?= $isOwner ? 'you own this group' : ($shown['permission'] === 'view' ? 'you can view' : 'you can edit') ?></p>
+      </div>
+      <?php if ($shownId !== $groupId): ?>
+      <form method="post" action="/switch-group" class="inline-form">
+        <input type="hidden" name="group_id" value="<?= $shownId ?>">
+        <button type="submit" class="secondary">Open this group</button>
+      </form>
+      <?php endif; ?>
+    </div>
+
+    <?php if ($shown['permission'] === 'edit'): ?>
+    <h2>Invite people</h2>
+    <div class="qr-block">
+      <div class="qr-image"><?= qrcode_svg_markup($inviteUrl, 4) ?></div>
+      <div class="qr-info">
+        <p class="meta">Send this link, or let them scan the code — they'll join after logging in or creating an account.</p>
+        <p class="meta"><code id="invite-link"><?= h($inviteUrl) ?></code></p>
+        <div class="row-actions">
+          <button type="button" class="secondary copy-btn" data-copy-target="invite-link"><?= icon('copy', 14) ?><span class="copy-btn-label">Copy link</span></button>
+          <a class="btn secondary" href="/groups/<?= $shownId ?>/invite.svg" download><?= icon('download', 14) ?>SVG</a>
+          <a class="btn secondary" href="/groups/<?= $shownId ?>/invite.png" download><?= icon('download', 14) ?>PNG</a>
+        </div>
+        <p class="copy-status meta" role="status" aria-live="polite"></p>
+        <p class="meta">Or tell them to choose <strong>Join a group</strong> under Groups and type:</p>
+        <dl class="join-details">
+          <dt>Name</dt><dd><code><?= h($shown['name']) ?></code></dd>
+          <dt>Key</dt><dd><code class="join-key"><?= h(format_join_key($shown['join_key'])) ?></code></dd>
+        </dl>
+        <?php if ($isOwner): ?>
+        <form method="post" class="inline-form" onsubmit="return confirm('Make a new link and key? The current ones will stop working.');">
+          <input type="hidden" name="action" value="reset_invite">
+          <button type="submit" class="btn-ghost"><?= icon('lock', 14) ?>New link and key</button>
+        </form>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
+
+    <h2>Members</h2>
+    <ul class="card-list">
+      <?php foreach ($members as $m): ?>
+        <li class="card">
+          <div class="card-head">
+            <div class="card-body">
+              <span class="card-title"><?= h($m['username']) ?><?= (int)$m['id'] === $userId ? ' (you)' : '' ?></span>
+              <span class="meta"><?= $m['role'] === 'owner' ? 'owner' : ($m['permission'] === 'edit' ? 'can edit' : 'view only') ?></span>
+            </div>
+            <?php if ($isOwner && $m['role'] !== 'owner'): ?>
+            <details class="card-menu">
+              <summary aria-label="Manage member"><?= icon('dots', 16) ?></summary>
+              <div class="card-menu-body">
+                <form method="post" class="inline-form">
+                  <input type="hidden" name="action" value="set_permission">
+                  <input type="hidden" name="user_id" value="<?= (int)$m['id'] ?>">
+                  <select name="permission">
+                    <option value="edit" <?= $m['permission'] === 'edit' ? 'selected' : '' ?>>Can edit</option>
+                    <option value="view" <?= $m['permission'] === 'view' ? 'selected' : '' ?>>View only</option>
+                  </select>
+                  <button type="submit" class="secondary"><?= icon('check', 14) ?>Save</button>
+                </form>
+                <form method="post" class="inline-form" onsubmit="return confirm('Remove this person from the group?');">
+                  <input type="hidden" name="action" value="remove_member">
+                  <input type="hidden" name="user_id" value="<?= (int)$m['id'] ?>">
+                  <button type="submit" class="danger"><?= icon('trash', 14) ?>Remove</button>
+                </form>
+              </div>
+            </details>
+            <?php endif; ?>
+          </div>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+
+    <h2>Settings</h2>
+    <?php if ($isOwner): ?>
+      <form method="post" class="inline-form">
+        <input type="hidden" name="action" value="rename_group">
+        <input type="text" name="name" value="<?= h($shown['name']) ?>" required maxlength="<?= GROUP_NAME_MAX_LENGTH ?>" aria-label="Group name">
+        <button type="submit" class="secondary"><?= icon('edit', 14) ?>Rename</button>
+      </form>
+      <div class="card add-card danger-zone">
+        <details>
+          <summary><?= icon('trash', 15) ?>Delete this group</summary>
+          <form method="post" class="stack-form-v">
+            <input type="hidden" name="action" value="delete_group">
+            <p class="meta">This deletes every place, box and item in "<?= h($shown['name']) ?>" for all its members. Type the group's name to confirm.</p>
+            <label>Group name<input type="text" name="confirm_name" required autocomplete="off"></label>
+            <button type="submit" class="danger">Delete group and everything in it</button>
+          </form>
+        </details>
+      </div>
+    <?php else: ?>
+      <form method="post" class="inline-form" onsubmit="return confirm('Leave this group? You will lose access to everything in it.');">
+        <input type="hidden" name="action" value="leave_group">
+        <button type="submit" class="danger"><?= icon('log-out', 14) ?>Leave group</button>
+      </form>
+    <?php endif; ?>
+    <?php
+    layout($shown['name'], ob_get_clean(), ['Groups' => '/groups', $shown['name'] => null], $nav);
+    exit;
+}
+
+// -------------------------------------------------------------------------
+// Routes: /add/{token} and /remove/{token} — what a box's or place's
+// add-item / remove-item QR codes link to. The token is the box's or
+// place's share token; you must be in its group (it becomes the active
+// one). Plus /add|remove/{token}/qr.svg|png and label.svg|png.
+// -------------------------------------------------------------------------
+if (count($segments) >= 2 && in_array($segments[0], ['add', 'remove'], true)) {
+    $qrAction = $segments[0];
+    $token = $segments[1];
+    $box = find_box_by_token($pdo, $token);
+    $place = null;
+    if ($box) {
+        $stmt = $pdo->prepare('SELECT * FROM places WHERE id = ?');
+        $stmt->execute([(int)$box['place_id']]);
+        $place = $stmt->fetch() ?: null;
+    } else {
+        $place = find_place_by_token($pdo, $token);
+    }
+    if (!$place || $place['group_id'] === null || !find_membership($pdo, (int)$place['group_id'], $userId)) {
+        render_error(404, 'This code is for a box or place that doesn\'t exist anymore, or is in a group you\'re not part of.', $nav);
+    }
+    $actionUrl = action_qr_url($qrAction, $token);
+    $title = $box ? $box['name'] : $place['name'];
+    $subtitle = ($qrAction === 'add' ? 'Scan to add an item' : 'Scan to remove an item') . ($box ? ' · ' . $place['name'] : '');
+
+    if (count($segments) === 3 && in_array($segments[2], ['qr.svg', 'qr.png'], true)) {
+        $segments[2] === 'qr.png' ? qrcode_send_png($actionUrl) : qrcode_send_svg($actionUrl);
+        exit;
+    }
+    if (count($segments) === 3 && in_array($segments[2], ['label.svg', 'label.png'], true)) {
+        require_once __DIR__ . '/includes/label.php';
+        $widthMm = isset($_GET['w']) ? (float)$_GET['w'] : 50.0;
+        $heightMm = isset($_GET['h']) ? (float)$_GET['h'] : 30.0;
+        $dpi = isset($_GET['dpi']) ? (int)$_GET['dpi'] : 300;
+        if ($segments[2] === 'label.png') {
+            label_send_png($actionUrl, $title, $subtitle, $widthMm, $heightMm, $dpi);
+        } else {
+            label_send_svg($actionUrl, $title, $subtitle, $widthMm, $heightMm);
+        }
+        exit;
+    }
+    if (count($segments) !== 2) {
+        render_error(404, 'Page not found.', $nav);
+    }
+
+    set_active_group($pdo, (int)$place['group_id']);
+    $target = '/place/' . $place['slug'] . ($box ? '/' . $box['slug'] : '');
+    redirect($target . '?mode=' . $qrAction . '#' . ($qrAction === 'add' ? 'add-item' : 'items'));
 }
 
 // -------------------------------------------------------------------------
@@ -950,8 +1346,7 @@ if ($segments === []) {
         if ($action === 'create_place') {
             $name = trim($_POST['name'] ?? '');
             if ($name !== '') {
-                $slug = unique_place_slug($pdo, $ownerId, $name);
-                $pdo->prepare('INSERT INTO places (owner_id, name, slug) VALUES (?, ?, ?)')->execute([$ownerId, $name, $slug]);
+                create_place($pdo, $groupId, $name);
                 flash_set('Place "' . $name . '" created.', 'success');
             } else {
                 flash_set('Place name cannot be empty.', 'error');
@@ -960,14 +1355,14 @@ if ($segments === []) {
             $id = (int)($_POST['id'] ?? 0);
             $name = trim($_POST['name'] ?? '');
             if ($id && $name !== '') {
-                $slug = unique_place_slug($pdo, $ownerId, $name, $id);
-                $pdo->prepare('UPDATE places SET name = ?, slug = ? WHERE id = ? AND owner_id = ?')->execute([$name, $slug, $id, $ownerId]);
+                $slug = unique_place_slug($pdo, $groupId, $name, $id);
+                $pdo->prepare('UPDATE places SET name = ?, slug = ? WHERE id = ? AND group_id = ?')->execute([$name, $slug, $id, $groupId]);
                 flash_set('Place renamed.', 'success');
             }
         } elseif ($action === 'delete_place') {
             $id = (int)($_POST['id'] ?? 0);
             if ($id) {
-                $pdo->prepare('DELETE FROM places WHERE id = ? AND owner_id = ?')->execute([$id, $ownerId]);
+                $pdo->prepare('DELETE FROM places WHERE id = ? AND group_id = ?')->execute([$id, $groupId]);
                 flash_set('Place deleted.', 'success');
             }
         }
@@ -979,15 +1374,15 @@ if ($segments === []) {
                 (SELECT COUNT(*) FROM boxes WHERE boxes.place_id = places.id) AS box_count,
                 (SELECT COUNT(*) FROM items JOIN boxes ON boxes.id = items.box_id WHERE boxes.place_id = places.id)
                     + (SELECT COUNT(*) FROM items WHERE items.place_id = places.id) AS item_count
-         FROM places WHERE owner_id = ? ORDER BY name COLLATE NOCASE"
+         FROM places WHERE group_id = ? ORDER BY name COLLATE NOCASE"
     );
-    $stmt->execute([$ownerId]);
+    $stmt->execute([$groupId]);
     $places = $stmt->fetchAll();
 
     ob_start();
     ?>
     <h1>Places</h1>
-    <p class="page-subtitle">Everything <?= (int)$ownerId === (int)$currentUser['id'] ? 'you own' : h($owner['username']) . ' owns' ?>, findable in seconds.</p>
+    <p class="page-subtitle">Everything in <?= h($group['name']) ?>, findable in seconds.<?php if ((int)$group['member_count'] > 1): ?> Shared by <?= (int)$group['member_count'] ?> people — <a href="/groups/<?= $groupId ?>">see who</a>.<?php elseif ($canEdit): ?> <a href="/groups/<?= $groupId ?>">Invite people</a> to share it.<?php endif; ?></p>
     <?php if (!$places): ?>
       <div class="empty-state">
         <?= icon('inbox', 28) ?>
@@ -1057,10 +1452,10 @@ if ($segments === ['search']) {
              FROM items
              LEFT JOIN boxes ON boxes.id = items.box_id
              JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
-             WHERE places.owner_id = ? AND items.name LIKE ? ESCAPE '\\'
+             WHERE places.group_id = ? AND items.name LIKE ? ESCAPE '\\'
              ORDER BY items.name COLLATE NOCASE"
         );
-        $stmt->execute([$ownerId, $like]);
+        $stmt->execute([$groupId, $like]);
         $results = $stmt->fetchAll();
     }
 
@@ -1113,7 +1508,7 @@ if ($segments === ['search']) {
 // -------------------------------------------------------------------------
 if (count($segments) >= 2 && $segments[0] === 'place') {
     $placeSlug = $segments[1];
-    $place = find_place_by_slug($pdo, $ownerId, $placeSlug);
+    $place = find_place_by_slug($pdo, $groupId, $placeSlug);
     if (!$place) {
         render_error(404, 'No place found for "' . $placeSlug . '".', $nav);
     }
@@ -1177,11 +1572,12 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         $boxId = (int)$box['id'];
         $viewUrl = base_url() . '/view/' . $box['share_token'];
         $scanKey = 'box:' . $boxId;
+        $mode = item_mode();
 
         if ($method === 'POST') {
             require_edit($pdo);
             $action = $_POST['action'] ?? '';
-            if (handle_item_action($pdo, $action, $boxId, null, $ownerId)) {
+            if (handle_item_action($pdo, $action, $boxId, null, $groupId)) {
                 // handled — falls through to the redirect below
             } elseif (handle_scan_action($action, $scanKey)) {
                 // handled — falls through to the redirect below
@@ -1203,7 +1599,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                 }
             } elseif ($action === 'move_box') {
                 $newPlaceId = (int)($_POST['place_id'] ?? 0);
-                $newSlug = move_box_to($pdo, $boxId, $ownerId, $newPlaceId);
+                $newSlug = move_box_to($pdo, $boxId, $groupId, $newPlaceId);
                 if ($newSlug !== null) {
                     $newPlaceStmt = $pdo->prepare('SELECT slug FROM places WHERE id = ?');
                     $newPlaceStmt->execute([$newPlaceId]);
@@ -1217,7 +1613,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
                 flash_set('Box deleted.', 'success');
                 redirect('/place/' . $placeSlug);
             }
-            redirect('/place/' . $placeSlug . '/' . $boxSlug);
+            redirect('/place/' . $placeSlug . '/' . $boxSlug . item_mode_query($mode));
         }
 
         $stmt = $pdo->prepare('SELECT * FROM items WHERE box_id = ? ORDER BY name COLLATE NOCASE');
@@ -1226,7 +1622,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         $pendingBarcode = pending_barcode_take();
         $pendingName = pending_name_take();
         $reviewItems = ocr_review_get($scanKey);
-        $moveDestinations = $canEdit ? list_move_destinations($pdo, $ownerId) : [];
+        $moveDestinations = $canEdit ? list_move_destinations($pdo, $groupId) : [];
 
         ob_start();
         ?>
@@ -1291,8 +1687,9 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
           </div>
         </div>
 
-        <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, $place['name'] . ' / ' . $box['name']) ?>
+        <?php if ($mode === ''): ?><?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?><?php endif; ?>
+        <?= render_items_section($items, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, $place['name'] . ' / ' . $box['name'], $mode, '/place/' . $placeSlug . '/' . $box['slug']) ?>
+        <?= render_action_qr_section((string)$box['share_token'], 'box', $canEdit) ?>
         <?php
         layout($box['name'], ob_get_clean(), [$place['name'] => '/place/' . $placeSlug, $box['name'] => null], $nav);
         exit;
@@ -1302,11 +1699,12 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     // Route: /place/{placeSlug}  (list of boxes)
     // ---------------------------------------------------------------
     $scanKey = 'place:' . $placeId;
+    $mode = item_mode();
 
     if ($method === 'POST') {
         require_edit($pdo);
         $action = $_POST['action'] ?? '';
-        if (handle_item_action($pdo, $action, null, $placeId, $ownerId)) {
+        if (handle_item_action($pdo, $action, null, $placeId, $groupId)) {
             // handled — falls through to the redirect below
         } elseif (handle_scan_action($action, $scanKey)) {
             // handled — falls through to the redirect below
@@ -1331,14 +1729,14 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             $name = trim($_POST['name'] ?? '');
             if ($id && $name !== '') {
                 $slug = unique_box_slug($pdo, $placeId, $name, $id);
-                $pdo->prepare('UPDATE boxes SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $id]);
+                $pdo->prepare('UPDATE boxes SET name = ?, slug = ? WHERE id = ? AND place_id = ?')->execute([$name, $slug, $id, $placeId]);
                 flash_set('Box renamed.', 'success');
             }
         } elseif ($action === 'move_box') {
             $id = (int)($_POST['id'] ?? 0);
             $newPlaceId = (int)($_POST['place_id'] ?? 0);
             if ($id) {
-                if (move_box_to($pdo, $id, $ownerId, $newPlaceId) !== null) {
+                if (move_box_to($pdo, $id, $groupId, $newPlaceId) !== null) {
                     flash_set('Box moved.', 'success');
                 } else {
                     flash_set('Couldn\'t move that box — pick a valid place.', 'error');
@@ -1347,13 +1745,13 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
         } elseif ($action === 'delete_box') {
             $id = (int)($_POST['id'] ?? 0);
             if ($id) {
-                $pdo->prepare('DELETE FROM boxes WHERE id = ?')->execute([$id]);
+                $pdo->prepare('DELETE FROM boxes WHERE id = ? AND place_id = ?')->execute([$id, $placeId]);
                 flash_set('Box deleted.', 'success');
             }
         } elseif ($action === 'rename_place') {
             $name = trim($_POST['name'] ?? '');
             if ($name !== '') {
-                $slug = unique_place_slug($pdo, $ownerId, $name, $placeId);
+                $slug = unique_place_slug($pdo, $groupId, $name, $placeId);
                 $pdo->prepare('UPDATE places SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $placeId]);
                 flash_set('Place renamed.', 'success');
                 redirect('/place/' . $slug);
@@ -1363,7 +1761,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
             flash_set('Place deleted.', 'success');
             redirect('/');
         }
-        redirect('/place/' . $placeSlug);
+        redirect('/place/' . $placeSlug . item_mode_query($mode));
     }
 
     $stmt = $pdo->prepare(
@@ -1379,7 +1777,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     $pendingBarcode = pending_barcode_take();
     $pendingName = pending_name_take();
     $reviewItems = ocr_review_get($scanKey);
-    $moveDestinations = $canEdit ? list_move_destinations($pdo, $ownerId) : [];
+    $moveDestinations = $canEdit ? list_move_destinations($pdo, $groupId) : [];
 
     ob_start();
     ?>
@@ -1468,8 +1866,9 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
     <?php if ($canEdit || $placeItems): ?>
     <p class="section-note">Items below are loose in <?= h($place['name']) ?> itself, not inside any box.</p>
     <?php endif; ?>
-    <?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?>
-    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, (string)$place['name']) ?>
+    <?php if ($mode === ''): ?><?= render_photo_scan_section($scanKey, $reviewItems, $canEdit) ?><?php endif; ?>
+    <?= render_items_section($placeItems, $pendingBarcode, $pendingName, $canEdit, $moveDestinations, (string)$place['name'], $mode, '/place/' . $placeSlug) ?>
+    <?= render_action_qr_section((string)$place['share_token'], 'place', $canEdit) ?>
     <?php
     layout($place['name'], ob_get_clean(), [$place['name'] => null], $nav);
     exit;

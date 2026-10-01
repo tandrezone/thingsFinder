@@ -11,7 +11,9 @@ import app.thingsfinder.data.backup.BackupRepository
 import app.thingsfinder.data.db.DatabaseFiles
 import app.thingsfinder.data.db.DatabaseImportException
 import app.thingsfinder.data.db.DatabaseSummary
+import app.thingsfinder.domain.AccountRules
 import app.thingsfinder.platform.FileIo
+import app.thingsfinder.sync.ActiveGroup
 import app.thingsfinder.sync.ApiResult
 import app.thingsfinder.sync.CloudApi
 import app.thingsfinder.sync.CloudSessionStore
@@ -127,6 +129,60 @@ class SettingsViewModel(
         }
     }
 
+    /** POST /api/auth/register; on success it's exactly a sign-in (the new account's personal group becomes active). */
+    fun register(
+        rawServer: String,
+        username: String,
+        password: String,
+        confirm: String,
+        deviceName: String,
+        onResult: (SignInResult) -> Unit,
+    ) {
+        val server = ServerUrl.normalize(rawServer)
+        val error = when {
+            server == null -> errorMsg(R.string.cloud_error_server_url)
+            !AccountRules.validUsername(username) -> errorMsg(R.string.cloud_error_username_rules)
+            !AccountRules.validPassword(password) -> errorMsg(R.string.cloud_error_password_short, AccountRules.MIN_PASSWORD)
+            password != confirm -> errorMsg(R.string.cloud_error_password_mismatch)
+            else -> null
+        }
+        if (error != null || server == null) {
+            onResult(SignInResult.Error(error ?: errorMsg(R.string.cloud_error_server_url)))
+            return
+        }
+        viewModelScope.launch {
+            _syncing.value = true
+            val result = try {
+                api.register(server, username.trim(), password, deviceName)
+            } finally {
+                _syncing.value = false
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    val group = result.value.group?.let { ActiveGroup(it.id, it.name, it.permission) }
+                    session.signedIn(server, result.value.user.username, result.value.token, group)
+                    onResult(SignInResult.Success)
+                    _messages.send(msg(R.string.cloud_registered, result.value.user.username))
+                    runSync(announce = true)
+                }
+                is ApiResult.HttpError -> onResult(
+                    SignInResult.Error(
+                        when (result.code) {
+                            409 -> errorMsg(R.string.cloud_error_username_taken)
+                            403 -> errorMsg(R.string.cloud_error_registration_disabled)
+                            404 -> errorMsg(R.string.cloud_error_no_register)
+                            400 -> errorMsg(R.string.cloud_error_server_says, result.message)
+                            else -> errorMsg(R.string.cloud_error_http, result.code, result.message)
+                        },
+                    ),
+                )
+                is ApiResult.Unauthorized -> onResult(SignInResult.Error(errorMsg(R.string.cloud_error_server_says, result.message)))
+                is ApiResult.NetworkError -> onResult(SignInResult.Error(errorMsg(R.string.cloud_error_unreachable, hostOf(server))))
+                is ApiResult.BadResponse -> onResult(SignInResult.Error(errorMsg(R.string.cloud_error_no_register)))
+            }
+        }
+    }
+
     fun signOut() {
         viewModelScope.launch {
             val state = session.current()
@@ -155,6 +211,7 @@ class SettingsViewModel(
         when (outcome) {
             is SyncOutcome.Synced -> if (announce) _messages.send(msg(R.string.cloud_synced, outcome.pushed, outcome.pulled))
             SyncOutcome.SignedOut -> _messages.send(errorMsg(R.string.cloud_error_signed_out))
+            is SyncOutcome.NoAccess -> _messages.send(errorMsg(R.string.cloud_error_sync_failed, outcome.message))
             is SyncOutcome.Failed -> _messages.send(errorMsg(R.string.cloud_error_sync_failed, outcome.message))
             SyncOutcome.Disabled, SyncOutcome.NotSignedIn -> Unit
         }

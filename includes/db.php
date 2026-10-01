@@ -29,9 +29,8 @@ function get_db(): PDO
 
 function init_schema(PDO $pdo): void
 {
-    // One row per person who can log in. Every place belongs to exactly one
-    // user (its owner); other users can be granted access to *all* of an
-    // owner's places/boxes/items via the shares table below.
+    // One row per person who can log in. What they can see is decided by
+    // the groups they belong to (includes/groups.php), not by the account.
     $pdo->exec("CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
@@ -39,36 +38,19 @@ function init_schema(PDO $pdo): void
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
 
-    // Grants user_id access to everything owner_id owns, at the given
-    // permission. 'edit' can do everything the owner can (add/rename/
-    // delete); 'view' can only look. There's no row for an owner viewing
-    // their own stuff — that's always full access, handled in code.
-    $pdo->exec("CREATE TABLE IF NOT EXISTS shares (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        permission TEXT NOT NULL CHECK (permission IN ('view', 'edit')),
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(owner_id, user_id)
-    )");
-    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id)');
-    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id)');
+    require_once __DIR__ . '/groups.php';
+    init_groups_schema($pdo);
 
-    // owner_id is nullable at the schema level only so the migration below
-    // can add it to a pre-login database in one ALTER TABLE; every place is
-    // given a real owner as soon as one exists (see migrate_places_table_if_needed
-    // and the first-run setup flow in includes/auth.php). A place's slug is
-    // only unique *within its owner's* places, not globally, so two people
-    // can each have their own "Garage".
-    $pdo->exec("CREATE TABLE IF NOT EXISTS places (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        slug TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(owner_id, slug)
-    )");
+    // Every place belongs to one group. group_id is nullable at the schema
+    // level only for places left over from a pre-login database, which the
+    // first-run setup flow hands to the first account (adopt_orphan_places).
+    // Older databases are upgraded in two steps: pre-login -> per-owner
+    // places (migrate_places_table_if_needed), then per-owner -> groups
+    // (migrate_places_to_groups, which also turns old shares into members).
+    $pdo->exec(places_table_sql('IF NOT EXISTS'));
     migrate_places_table_if_needed($pdo);
+    migrate_places_to_groups($pdo);
+    migrate_place_tokens_if_needed($pdo);
 
     // share_token is the box's public, unguessable identifier — the QR
     // code / printable label link to /view/{share_token}, a read-only page
@@ -188,14 +170,15 @@ function migrate_items_table_if_needed(PDO $pdo): void
 
 /**
  * Upgrades an existing `places` table created before logins existed (no
- * owner_id column, slug globally unique) to the current shape. Every
- * existing place ends up with owner_id NULL until the first-run setup flow
- * assigns them all to the first account created (see ensure_first_user()).
+ * owner_id column, slug globally unique) to the per-owner shape, which
+ * migrate_places_to_groups() then turns into the current per-group one.
+ * Every existing place ends up with no owner until the first-run setup
+ * flow assigns them all to the first account created (adopt_orphan_places()).
  */
 function migrate_places_table_if_needed(PDO $pdo): void
 {
     $cols = array_column($pdo->query('PRAGMA table_info(places)')->fetchAll(), 'name');
-    if (in_array('owner_id', $cols, true)) {
+    if (in_array('owner_id', $cols, true) || in_array('group_id', $cols, true)) {
         return;
     }
     // `places` is a foreign key target for both `boxes.place_id` and
@@ -324,7 +307,17 @@ function migrate_boxes_table_if_needed(PDO $pdo): void
     }
 }
 
-/** A random, unguessable token for a box's public read-only link. */
+/** Backfills a share token for every place that lacks one (places only gained them with the add/remove QR codes). */
+function migrate_place_tokens_if_needed(PDO $pdo): void
+{
+    $ids = $pdo->query('SELECT id FROM places WHERE share_token IS NULL')->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($ids as $id) {
+        $pdo->prepare('UPDATE places SET share_token = ? WHERE id = ?')->execute([new_share_token(), $id]);
+    }
+    $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_places_token ON places(share_token)');
+}
+
+/** A random, unguessable token for a box's public read-only link (and a place's/box's add/remove QR codes). */
 function new_share_token(): string
 {
     return bin2hex(random_bytes(16));
@@ -363,56 +356,10 @@ function find_user_by_id(PDO $pdo, int $id): ?array
     return $stmt->fetch() ?: null;
 }
 
-/** Every owner-less place (from an upgrade) is handed to this user — called once, right after the first account is created. */
-function adopt_orphan_places(PDO $pdo, int $userId): void
+/** Every owner-less place (from an upgrade) goes into this group — called once, right after the first account is created. */
+function adopt_orphan_places(PDO $pdo, int $groupId): void
 {
-    $pdo->prepare('UPDATE places SET owner_id = ? WHERE owner_id IS NULL')->execute([$userId]);
-}
-
-/** Creates a share (or updates the permission of an existing one). */
-function upsert_share(PDO $pdo, int $ownerId, int $userId, string $permission): void
-{
-    $pdo->prepare(
-        'INSERT INTO shares (owner_id, user_id, permission) VALUES (?, ?, ?)
-         ON CONFLICT(owner_id, user_id) DO UPDATE SET permission = excluded.permission'
-    )->execute([$ownerId, $userId, $permission]);
-}
-
-function delete_share(PDO $pdo, int $ownerId, int $userId): void
-{
-    $pdo->prepare('DELETE FROM shares WHERE owner_id = ? AND user_id = ?')->execute([$ownerId, $userId]);
-}
-
-/** The permission $userId has on $ownerId's data, or null if none was granted (and they're not the owner). */
-function find_share(PDO $pdo, int $ownerId, int $userId): ?array
-{
-    $stmt = $pdo->prepare('SELECT * FROM shares WHERE owner_id = ? AND user_id = ?');
-    $stmt->execute([$ownerId, $userId]);
-    return $stmt->fetch() ?: null;
-}
-
-/** People you've granted access to your own stuff — for the "People" management page. */
-function list_shares_granted_by(PDO $pdo, int $ownerId): array
-{
-    $stmt = $pdo->prepare(
-        'SELECT shares.*, users.username FROM shares
-         JOIN users ON users.id = shares.user_id
-         WHERE shares.owner_id = ? ORDER BY users.username COLLATE NOCASE'
-    );
-    $stmt->execute([$ownerId]);
-    return $stmt->fetchAll();
-}
-
-/** Other accounts that have granted *you* access — for the context switcher. */
-function list_shares_received_by(PDO $pdo, int $userId): array
-{
-    $stmt = $pdo->prepare(
-        'SELECT shares.*, users.username AS owner_username FROM shares
-         JOIN users ON users.id = shares.owner_id
-         WHERE shares.user_id = ? ORDER BY users.username COLLATE NOCASE'
-    );
-    $stmt->execute([$userId]);
-    return $stmt->fetchAll();
+    $pdo->prepare('UPDATE places SET group_id = ? WHERE group_id IS NULL')->execute([$groupId]);
 }
 
 /** Looks up a registered barcode → item association, if any. */
@@ -447,15 +394,15 @@ function slugify(string $text): string
     return $text;
 }
 
-/** Generate a slug for a place that is unique among one owner's places (two different people can each have a "garage"). */
-function unique_place_slug(PDO $pdo, int $ownerId, string $name, ?int $excludeId = null): string
+/** Generate a slug for a place that is unique within its group (two groups can each have a "garage"). */
+function unique_place_slug(PDO $pdo, int $groupId, string $name, ?int $excludeId = null): string
 {
     $base = slugify($name);
     $slug = $base;
     $n = 2;
     while (true) {
-        $sql = 'SELECT COUNT(*) FROM places WHERE owner_id = ? AND slug = ?';
-        $params = [$ownerId, $slug];
+        $sql = 'SELECT COUNT(*) FROM places WHERE group_id = ? AND slug = ?';
+        $params = [$groupId, $slug];
         if ($excludeId !== null) {
             $sql .= ' AND id != ?';
             $params[] = $excludeId;
@@ -468,6 +415,14 @@ function unique_place_slug(PDO $pdo, int $ownerId, string $name, ?int $excludeId
         $slug = $base . '-' . $n;
         $n++;
     }
+}
+
+/** Creates a place in a group (unique slug, fresh share token) and returns its id. */
+function create_place(PDO $pdo, int $groupId, string $name): int
+{
+    $pdo->prepare('INSERT INTO places (group_id, name, slug, share_token) VALUES (?, ?, ?, ?)')
+        ->execute([$groupId, $name, unique_place_slug($pdo, $groupId, $name), new_share_token()]);
+    return (int)$pdo->lastInsertId();
 }
 
 /** Generate a slug for a box that is unique within its place. */
@@ -493,10 +448,10 @@ function unique_box_slug(PDO $pdo, int $placeId, string $name, ?int $excludeId =
     }
 }
 
-function find_place_by_slug(PDO $pdo, int $ownerId, string $slug): ?array
+function find_place_by_slug(PDO $pdo, int $groupId, string $slug): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM places WHERE owner_id = ? AND slug = ?');
-    $stmt->execute([$ownerId, $slug]);
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE group_id = ? AND slug = ?');
+    $stmt->execute([$groupId, $slug]);
     $row = $stmt->fetch();
     return $row ?: null;
 }
@@ -509,7 +464,7 @@ function find_box_by_slug(PDO $pdo, int $placeId, string $slug): ?array
     return $row ?: null;
 }
 
-/** Looks up a box by its public share token, for the read-only /view/{token} page — no owner check, that's the point. */
+/** Looks up a box by its public share token, for the read-only /view/{token} page — no membership check, that's the point. */
 function find_box_by_token(PDO $pdo, string $token): ?array
 {
     $stmt = $pdo->prepare('SELECT * FROM boxes WHERE share_token = ?');
@@ -518,37 +473,46 @@ function find_box_by_token(PDO $pdo, string $token): ?array
     return $row ?: null;
 }
 
-/** Every place an owner has, for a destination picker (move item/box, etc). */
-function list_places_for_owner(PDO $pdo, int $ownerId): array
+/** Looks up a place by its share token, for the /add/{token} and /remove/{token} QR codes — callers check membership. */
+function find_place_by_token(PDO $pdo, string $token): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM places WHERE owner_id = ? ORDER BY name COLLATE NOCASE');
-    $stmt->execute([$ownerId]);
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE share_token = ?');
+    $stmt->execute([$token]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+/** Every place in a group, for a destination picker (move item/box, etc). */
+function list_places_for_group(PDO $pdo, int $groupId): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE group_id = ? ORDER BY name COLLATE NOCASE');
+    $stmt->execute([$groupId]);
     return $stmt->fetchAll();
 }
 
-/** Every box across every one of an owner's places, place name/slug alongside — for the same pickers. */
-function list_boxes_for_owner(PDO $pdo, int $ownerId): array
+/** Every box across every one of a group's places, place name/slug alongside — for the same pickers. */
+function list_boxes_for_group(PDO $pdo, int $groupId): array
 {
     $stmt = $pdo->prepare(
         'SELECT boxes.*, places.name AS place_name, places.slug AS place_slug
          FROM boxes JOIN places ON places.id = boxes.place_id
-         WHERE places.owner_id = ?
+         WHERE places.group_id = ?
          ORDER BY places.name COLLATE NOCASE, boxes.name COLLATE NOCASE'
     );
-    $stmt->execute([$ownerId]);
+    $stmt->execute([$groupId]);
     return $stmt->fetchAll();
 }
 
 /**
- * Every place the owner has, each with its own boxes nested under a
+ * Every place in the group, each with its own boxes nested under a
  * `boxes` key — the shape the move-item and move-box destination pickers
  * render as a single grouped <select> (one <optgroup> per place).
  */
-function list_move_destinations(PDO $pdo, int $ownerId): array
+function list_move_destinations(PDO $pdo, int $groupId): array
 {
-    $places = list_places_for_owner($pdo, $ownerId);
+    $places = list_places_for_group($pdo, $groupId);
     $byPlace = [];
-    foreach (list_boxes_for_owner($pdo, $ownerId) as $box) {
+    foreach (list_boxes_for_group($pdo, $groupId) as $box) {
         $byPlace[(int)$box['place_id']][] = $box;
     }
     foreach ($places as &$place) {
@@ -562,15 +526,15 @@ function list_move_destinations(PDO $pdo, int $ownerId): array
  * Moves an item to a different box, or directly into a place (loose, no
  * box) — $destination is "box:{id}" or "place:{id}", as produced by the
  * move-item picker. Returns false without changing anything if it doesn't
- * parse, if $itemId doesn't currently belong to $ownerId, or if the target
- * box/place doesn't belong to $ownerId either. Both ownership checks
+ * parse, if $itemId isn't currently in group $groupId, or if the target
+ * box/place isn't in that group either. Both ownership checks
  * matter: without the destination check, a tampered request could move an
- * item into someone else's account; without the source check, it could
- * just as easily pull an item *out* of someone else's account by guessing
- * its id — items don't carry an owner_id of their own, so this is the only
+ * item into another group; without the source check, it could just as
+ * easily pull an item *out* of another group by guessing its id — items
+ * don't carry a group_id of their own, so this is the only
  * thing enforcing that boundary.
  */
-function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination): bool
+function move_item_to(PDO $pdo, int $itemId, int $groupId, string $destination): bool
 {
     [$type, $rawId] = array_pad(explode(':', $destination, 2), 2, '');
     $destId = (int)$rawId;
@@ -582,9 +546,9 @@ function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination):
         'SELECT items.id FROM items
          LEFT JOIN boxes ON boxes.id = items.box_id
          JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
-         WHERE items.id = ? AND places.owner_id = ?'
+         WHERE items.id = ? AND places.group_id = ?'
     );
-    $stmt->execute([$itemId, $ownerId]);
+    $stmt->execute([$itemId, $groupId]);
     if (!$stmt->fetchColumn()) {
         return false;
     }
@@ -592,9 +556,9 @@ function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination):
     if ($type === 'box') {
         $stmt = $pdo->prepare(
             'SELECT boxes.id FROM boxes JOIN places ON places.id = boxes.place_id
-             WHERE boxes.id = ? AND places.owner_id = ?'
+             WHERE boxes.id = ? AND places.group_id = ?'
         );
-        $stmt->execute([$destId, $ownerId]);
+        $stmt->execute([$destId, $groupId]);
         if (!$stmt->fetchColumn()) {
             return false;
         }
@@ -602,8 +566,8 @@ function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination):
         return true;
     }
 
-    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND owner_id = ?');
-    $stmt->execute([$destId, $ownerId]);
+    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND group_id = ?');
+    $stmt->execute([$destId, $groupId]);
     if (!$stmt->fetchColumn()) {
         return false;
     }
@@ -612,30 +576,30 @@ function move_item_to(PDO $pdo, int $itemId, int $ownerId, string $destination):
 }
 
 /**
- * Moves a box — and everything inside it — to a different place owned by
- * $ownerId. Slugs are only unique *within* a place, so a box named "Tools"
+ * Moves a box — and everything inside it — to a different place in group
+ * $groupId. Slugs are only unique *within* a place, so a box named "Tools"
  * moving into a place that already has a "Tools" box needs a fresh slug;
  * unique_box_slug() handles that. Returns the box's (possibly new) slug on
- * success, or null if $boxId doesn't currently belong to $ownerId, or
- * $newPlaceId isn't one of $ownerId's places. Both checks matter for the
+ * success, or null if $boxId isn't currently in group $groupId, or
+ * $newPlaceId isn't one of that group's places. Both checks matter for the
  * same reason as in move_item_to(): without the source check, a tampered
- * request could pull a box (and everything in it) out of someone else's
- * account just by guessing its id.
+ * request could pull a box (and everything in it) out of another group
+ * just by guessing its id.
  */
-function move_box_to(PDO $pdo, int $boxId, int $ownerId, int $newPlaceId): ?string
+function move_box_to(PDO $pdo, int $boxId, int $groupId, int $newPlaceId): ?string
 {
     $stmt = $pdo->prepare(
         'SELECT boxes.name FROM boxes JOIN places ON places.id = boxes.place_id
-         WHERE boxes.id = ? AND places.owner_id = ?'
+         WHERE boxes.id = ? AND places.group_id = ?'
     );
-    $stmt->execute([$boxId, $ownerId]);
+    $stmt->execute([$boxId, $groupId]);
     $name = $stmt->fetchColumn();
     if ($name === false) {
         return null;
     }
 
-    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND owner_id = ?');
-    $stmt->execute([$newPlaceId, $ownerId]);
+    $stmt = $pdo->prepare('SELECT id FROM places WHERE id = ? AND group_id = ?');
+    $stmt->execute([$newPlaceId, $groupId]);
     if (!$stmt->fetchColumn()) {
         return null;
     }

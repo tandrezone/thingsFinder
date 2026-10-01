@@ -3,10 +3,11 @@
  * JSON REST API.
  *
  * Every request must be logged in (the same PHP session cookie used by the
- * regular site) and every place/box/item route is scoped to whichever
- * account is currently active — your own, or one that shared their stuff
- * with you (see includes/auth.php). A view-only share can read everything
- * here but any create/update/delete call is rejected with 403.
+ * regular site, or an app bearer token) and every place/box/item route is
+ * scoped to the active group (see includes/auth.php) — token callers can
+ * pick one with ?group_id=, otherwise their default group is used. A
+ * view-only member can read everything here but any create/update/delete
+ * call is rejected with 403.
  *
  * Places:
  *   GET    /api/places
@@ -36,7 +37,7 @@
  *
  * Barcode register (barcode -> item name, used when scanning a barcode
  * while adding an item) — this dictionary is shared across every account on
- * the install, same as on the /barcodes page, so it isn't owner-scoped:
+ * the install, same as on the /barcodes page, so it isn't group-scoped:
  *   GET    /api/barcodes
  *   POST   /api/barcodes                   { barcode, name } — create or relabel
  *   GET    /api/barcodes/{code}            404 if not registered
@@ -47,16 +48,30 @@
  * don't have registered ourselves yet — never writes to our own register):
  *   GET    /api/lookup/{code}              { barcode, name, source } — name/source are null if not found
  *
- * Search (within the active account's own data only):
+ * Search (within the active group only):
  *   GET    /api/search?q=glue
+ *
+ * Groups (see includes/groups.php) — owner-only calls answer 403 to others,
+ * and a group you're not in is a 404:
+ *   GET    /api/groups                     -> { groups, default_group_id }
+ *   POST   /api/groups                     { name } -> 201 { group }
+ *   POST   /api/groups/join                { token } | { name, key } -> { group }
+ *   GET    /api/groups/{id}                -> { group, members }
+ *   PUT    /api/groups/{id}                { name } (owner)
+ *   DELETE /api/groups/{id}                (owner) — deletes everything in it
+ *   POST   /api/groups/{id}/invite/reset   (owner) new invite link and key
+ *   POST   /api/groups/{id}/leave          (not the owner)
+ *   PUT    /api/groups/{id}/members/{uid}  { permission: edit|view } (owner)
+ *   DELETE /api/groups/{id}/members/{uid}  (owner)
  *
  * Android app (bearer-token auth, see includes/sync.php) — every route above
  * also accepts `Authorization: Bearer <token>` instead of the session cookie:
+ *   POST   /api/auth/register              { username, password, device_name? } -> 201 { token, user, group }
  *   POST   /api/auth/login                 { username, password, device_name? } -> { token, user }
  *   POST   /api/auth/logout                revokes the token used for the call
- *   GET    /api/me                         -> { user }
- *   POST   /api/sync                       { since, places, boxes, items, deleted, barcodes }
- *                                          -> { server_time, changes, skipped }
+ *   GET    /api/me                         -> { user, default_group_id }
+ *   POST   /api/sync                       { group_id?, since, places, boxes, items, deleted, barcodes }
+ *                                          -> { server_time, group, changes, skipped }
  */
 
 // Never let a PHP warning or notice leak into (and corrupt) a JSON response.
@@ -73,7 +88,163 @@ $segments = path_segments($path); // e.g. ['api','places','3','boxes']
 
 array_shift($segments); // drop 'api'
 
-// ---- /api/auth/login — the only route that needs no credentials -----------
+/** A group as the app sees it; the invite is only shown to members who can edit. */
+function group_out(array $g): array
+{
+    return [
+        'id' => (int)$g['id'],
+        'name' => $g['name'],
+        'role' => $g['role'],
+        'permission' => $g['permission'],
+        'member_count' => (int)$g['member_count'],
+        'invite' => $g['permission'] === 'edit' ? [
+            'url' => group_invite_url($g),
+            'token' => $g['invite_token'],
+            'key' => format_join_key($g['join_key']),
+        ] : null,
+    ];
+}
+
+/** /api/groups/... — $rest is the path after "groups". Always ends the request. */
+function api_groups(PDO $pdo, string $method, array $rest, int $userId): void
+{
+    // /api/groups
+    if ($rest === []) {
+        if ($method === 'GET') {
+            json_response([
+                'groups' => array_map('group_out', list_user_groups($pdo, $userId)),
+                'default_group_id' => default_group_id($pdo, $userId),
+            ]);
+        }
+        if ($method === 'POST') {
+            $name = clean_group_name(read_body()['name'] ?? null);
+            if ($name === '') {
+                json_error('name is required');
+            }
+            $id = create_group($pdo, $userId, $name);
+            json_response(['group' => group_out(find_membership($pdo, $id, $userId))], 201);
+        }
+        json_error('Method not allowed', 405);
+    }
+
+    // /api/groups/join — by invite token (link / QR code), or by name + key
+    if ($rest === ['join']) {
+        if ($method !== 'POST') {
+            json_error('Method not allowed', 405);
+        }
+        $body = read_body();
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $group = $token !== ''
+            ? find_group_by_invite_token($pdo, $token)
+            : find_group_by_name_and_key($pdo, (string)($body['name'] ?? ''), (string)($body['key'] ?? ''));
+        if (!$group) {
+            usleep(300000); // keys are short — slow down guessing a little
+            json_error('Invite not found — check the link, or the group name and key', 404);
+        }
+        add_group_member($pdo, (int)$group['id'], $userId);
+        json_response(['group' => group_out(find_membership($pdo, (int)$group['id'], $userId))]);
+    }
+
+    $groupId = (int)$rest[0];
+    $membership = find_membership($pdo, $groupId, $userId);
+    if (!$membership) {
+        json_error('Group not found', 404);
+    }
+    $isOwner = $membership['role'] === 'owner';
+    $requireOwner = function () use ($isOwner) {
+        if (!$isOwner) {
+            json_error('Only the group\'s owner can do that', 403);
+        }
+    };
+
+    // /api/groups/{id}
+    if (count($rest) === 1) {
+        if ($method === 'GET') {
+            $members = array_map(fn($m) => [
+                'id' => (int)$m['id'], 'username' => $m['username'], 'role' => $m['role'], 'permission' => $m['permission'],
+            ], list_group_members($pdo, $groupId));
+            json_response(['group' => group_out($membership), 'members' => $members]);
+        }
+        if ($method === 'PUT' || $method === 'PATCH') {
+            $requireOwner();
+            $name = clean_group_name(read_body()['name'] ?? null);
+            if ($name === '') {
+                json_error('name is required');
+            }
+            rename_group($pdo, $groupId, $name);
+            json_response(['group' => group_out(find_membership($pdo, $groupId, $userId))]);
+        }
+        if ($method === 'DELETE') {
+            $requireOwner();
+            delete_group($pdo, $groupId);
+            json_response(['deleted' => true]);
+        }
+        json_error('Method not allowed', 405);
+    }
+
+    // /api/groups/{id}/invite/reset
+    if (array_slice($rest, 1) === ['invite', 'reset'] && $method === 'POST') {
+        $requireOwner();
+        reset_group_invite($pdo, $groupId);
+        json_response(['group' => group_out(find_membership($pdo, $groupId, $userId))]);
+    }
+
+    // /api/groups/{id}/leave
+    if (array_slice($rest, 1) === ['leave'] && $method === 'POST') {
+        if ($isOwner) {
+            json_error('You own this group — delete it instead of leaving', 400);
+        }
+        remove_group_member($pdo, $groupId, $userId);
+        json_response(['left' => true]);
+    }
+
+    // /api/groups/{id}/members/{userId}
+    if (count($rest) === 3 && $rest[1] === 'members') {
+        $requireOwner();
+        $memberId = (int)$rest[2];
+        if ($memberId === $userId) {
+            json_error('That\'s you — the owner stays in the group', 400);
+        }
+        if ($method === 'DELETE') {
+            remove_group_member($pdo, $groupId, $memberId);
+            json_response(['removed' => true]);
+        }
+        if ($method === 'PUT' || $method === 'PATCH') {
+            set_member_permission($pdo, $groupId, $memberId, (string)(read_body()['permission'] ?? 'edit'));
+            json_response(['updated' => true]);
+        }
+        json_error('Method not allowed', 405);
+    }
+
+    json_error('Not found', 404);
+}
+
+// ---- /api/auth/register — creates an account (and its personal group) ------
+if ($segments === ['auth', 'register']) {
+    if ($method !== 'POST') {
+        json_error('Method not allowed', 405);
+    }
+    if (!registration_enabled()) {
+        json_error('Registration is turned off on this server — ask its admin for an account', 403);
+    }
+    $body = read_body();
+    $username = is_string($body['username'] ?? null) ? trim($body['username']) : '';
+    $password = is_string($body['password'] ?? null) ? $body['password'] : '';
+    $problem = validate_new_account($pdo, $username, $password);
+    if ($problem !== null) {
+        json_error($problem, $problem === USERNAME_TAKEN ? 409 : 400);
+    }
+    [$newUserId, $newGroupId] = register_user($pdo, $username, $password);
+    $device = is_string($body['device_name'] ?? null) ? trim($body['device_name']) : 'Android';
+    $token = create_api_token($pdo, $newUserId, $device !== '' ? $device : 'Android');
+    json_response([
+        'token' => $token,
+        'user' => ['id' => $newUserId, 'username' => $username],
+        'group' => group_out(find_membership($pdo, $newGroupId, $newUserId)),
+    ], 201);
+}
+
+// ---- /api/auth/login — needs no credentials either -------------------------
 if ($segments === ['auth', 'login']) {
     if ($method !== 'POST') {
         json_error('Method not allowed', 405);
@@ -95,7 +266,8 @@ if ($segments === ['auth', 'login']) {
 }
 
 require_login_api($pdo);
-$ownerId = active_owner_id($pdo);
+$userId = (int)current_user_id();
+$groupId = active_group_id($pdo);
 
 /** Call before any create/update/delete — view-only shares get a 403. */
 function require_write(PDO $pdo): void
@@ -105,7 +277,10 @@ function require_write(PDO $pdo): void
 
 function place_out(array $p): array
 {
-    return ['id' => (int)$p['id'], 'name' => $p['name'], 'slug' => $p['slug'], 'url' => '/place/' . $p['slug']];
+    return [
+        'id' => (int)$p['id'], 'name' => $p['name'], 'slug' => $p['slug'], 'url' => '/place/' . $p['slug'],
+        'add_url' => '/add/' . $p['share_token'], 'remove_url' => '/remove/' . $p['share_token'],
+    ];
 }
 
 function box_out(array $b, ?array $place = null): array
@@ -116,6 +291,8 @@ function box_out(array $b, ?array $place = null): array
         'name' => $b['name'],
         'slug' => $b['slug'],
         'view_url' => isset($b['share_token']) ? '/view/' . $b['share_token'] : null,
+        'add_url' => isset($b['share_token']) ? '/add/' . $b['share_token'] : null,
+        'remove_url' => isset($b['share_token']) ? '/remove/' . $b['share_token'] : null,
     ];
     if ($place) {
         $out['url'] = '/place/' . $place['slug'] . '/' . $b['slug'];
@@ -140,37 +317,37 @@ function barcode_out(array $b): array
     return ['barcode' => $b['barcode'], 'name' => $b['name']];
 }
 
-/** Looks up a place, scoped to the given owner — returns null if it belongs to someone else (or doesn't exist). */
-function api_find_place(PDO $pdo, int $placeId, int $ownerId): ?array
+/** Looks up a place, scoped to the given group — returns null if it's in another group (or doesn't exist). */
+function api_find_place(PDO $pdo, int $placeId, int $groupId): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM places WHERE id = ? AND owner_id = ?');
-    $stmt->execute([$placeId, $ownerId]);
+    $stmt = $pdo->prepare('SELECT * FROM places WHERE id = ? AND group_id = ?');
+    $stmt->execute([$placeId, $groupId]);
     $row = $stmt->fetch();
     return $row ?: null;
 }
 
-/** Looks up a box, scoped to the given owner via its place — returns null if out of scope or missing. */
-function api_find_box(PDO $pdo, int $boxId, int $ownerId): ?array
+/** Looks up a box, scoped to the given group via its place — returns null if out of scope or missing. */
+function api_find_box(PDO $pdo, int $boxId, int $groupId): ?array
 {
     $stmt = $pdo->prepare(
         'SELECT boxes.* FROM boxes JOIN places ON places.id = boxes.place_id
-         WHERE boxes.id = ? AND places.owner_id = ?'
+         WHERE boxes.id = ? AND places.group_id = ?'
     );
-    $stmt->execute([$boxId, $ownerId]);
+    $stmt->execute([$boxId, $groupId]);
     $row = $stmt->fetch();
     return $row ?: null;
 }
 
-/** Looks up an item, scoped to the given owner via its box's place or its own place — returns null if out of scope or missing. */
-function api_find_item(PDO $pdo, int $itemId, int $ownerId): ?array
+/** Looks up an item, scoped to the given group via its box's place or its own place — returns null if out of scope or missing. */
+function api_find_item(PDO $pdo, int $itemId, int $groupId): ?array
 {
     $stmt = $pdo->prepare(
         'SELECT items.* FROM items
          LEFT JOIN boxes ON boxes.id = items.box_id
          JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
-         WHERE items.id = ? AND places.owner_id = ?'
+         WHERE items.id = ? AND places.group_id = ?'
     );
-    $stmt->execute([$itemId, $ownerId]);
+    $stmt->execute([$itemId, $groupId]);
     $row = $stmt->fetch();
     return $row ?: null;
 }
@@ -188,15 +365,34 @@ try {
         json_response(['logged_out' => true]);
     }
     if ($segments === ['me']) {
-        $me = find_user_by_id($pdo, current_user_id());
-        json_response(['user' => ['id' => (int)$me['id'], 'username' => $me['username']]]);
+        $me = find_user_by_id($pdo, $userId);
+        json_response([
+            'user' => ['id' => (int)$me['id'], 'username' => $me['username']],
+            'default_group_id' => default_group_id($pdo, $userId),
+        ]);
     }
     if ($segments === ['sync']) {
         if ($method !== 'POST') {
             json_error('Method not allowed', 405);
         }
-        // Sync always works on the caller's *own* account — never on a shared one.
-        json_response(sync_apply($pdo, (int)current_user_id(), read_body()));
+        // One group per sync: the one the phone names, or the user's default.
+        $body = read_body();
+        $syncGroupId = isset($body['group_id']) && is_numeric($body['group_id']) ? (int)$body['group_id'] : default_group_id($pdo, $userId);
+        $membership = find_membership($pdo, $syncGroupId, $userId);
+        if (!$membership) {
+            json_error('You are not a member of that group', 403);
+        }
+        $result = sync_apply($pdo, $syncGroupId, $body, $membership['permission'] === 'edit');
+        $result['group'] = [
+            'id' => (int)$membership['id'], 'name' => $membership['name'],
+            'permission' => $membership['permission'], 'role' => $membership['role'],
+        ];
+        json_response($result);
+    }
+
+    // ---- /api/groups[/...] ----------------------------------------------
+    if (($segments[0] ?? null) === 'groups') {
+        api_groups($pdo, $method, array_slice($segments, 1), $userId);
     }
 
     // ---- /api/search --------------------------------------------------
@@ -215,11 +411,11 @@ try {
              FROM items
              LEFT JOIN boxes ON boxes.id = items.box_id
              JOIN places ON places.id = COALESCE(items.place_id, boxes.place_id)
-             WHERE places.owner_id = ? AND items.name LIKE ? ESCAPE '\\'
+             WHERE places.group_id = ? AND items.name LIKE ? ESCAPE '\\'
              ORDER BY items.name COLLATE NOCASE"
         );
         $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
-        $stmt->execute([$ownerId, $like]);
+        $stmt->execute([$groupId, $like]);
         $results = [];
         foreach ($stmt->fetchAll() as $row) {
             $box = $row['box_id'] !== null
@@ -240,8 +436,8 @@ try {
         // /api/places
         if (count($segments) === 1) {
             if ($method === 'GET') {
-                $stmt = $pdo->prepare('SELECT * FROM places WHERE owner_id = ? ORDER BY name COLLATE NOCASE');
-                $stmt->execute([$ownerId]);
+                $stmt = $pdo->prepare('SELECT * FROM places WHERE group_id = ? ORDER BY name COLLATE NOCASE');
+                $stmt->execute([$groupId]);
                 json_response(['places' => array_map('place_out', $stmt->fetchAll())]);
             }
             if ($method === 'POST') {
@@ -251,9 +447,7 @@ try {
                 if ($name === '') {
                     json_error('name is required');
                 }
-                $slug = unique_place_slug($pdo, $ownerId, $name);
-                $pdo->prepare('INSERT INTO places (owner_id, name, slug) VALUES (?, ?, ?)')->execute([$ownerId, $name, $slug]);
-                $id = (int)$pdo->lastInsertId();
+                $id = create_place($pdo, $groupId, $name);
                 $row = $pdo->query("SELECT * FROM places WHERE id = $id")->fetch();
                 json_response(['place' => place_out($row)], 201);
             }
@@ -262,7 +456,7 @@ try {
 
         // /api/places/{id}
         $placeId = (int)$segments[1];
-        $place = api_find_place($pdo, $placeId, $ownerId);
+        $place = api_find_place($pdo, $placeId, $groupId);
 
         // /api/places/{id}/boxes
         if (count($segments) === 3 && $segments[2] === 'boxes') {
@@ -332,7 +526,7 @@ try {
                 if ($name === '') {
                     json_error('name is required');
                 }
-                $slug = unique_place_slug($pdo, $ownerId, $name, $placeId);
+                $slug = unique_place_slug($pdo, $groupId, $name, $placeId);
                 $pdo->prepare('UPDATE places SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $placeId]);
                 $row = $pdo->query("SELECT * FROM places WHERE id = $placeId")->fetch();
                 json_response(['place' => place_out($row)]);
@@ -349,7 +543,7 @@ try {
     // ---- /api/boxes[/...] ----------------------------------------------
     if (($segments[0] ?? null) === 'boxes') {
         $boxId = (int)($segments[1] ?? 0);
-        $box = api_find_box($pdo, $boxId, $ownerId);
+        $box = api_find_box($pdo, $boxId, $groupId);
 
         // /api/boxes/{id}/contents — the full contents of a box: itself, its
         // place, and all its items. (The box's own QR code points to the
@@ -419,8 +613,8 @@ try {
                 $slug = unique_box_slug($pdo, (int)$box['place_id'], $name, $boxId);
                 $pdo->prepare('UPDATE boxes SET name = ?, slug = ? WHERE id = ?')->execute([$name, $slug, $boxId]);
                 if (isset($body['place_id']) && (int)$body['place_id'] !== (int)$box['place_id']) {
-                    if (move_box_to($pdo, $boxId, $ownerId, (int)$body['place_id']) === null) {
-                        json_error('place_id must be one of your own places', 422);
+                    if (move_box_to($pdo, $boxId, $groupId, (int)$body['place_id']) === null) {
+                        json_error('place_id must be a place in this group', 422);
                     }
                 }
                 $row = $pdo->query("SELECT * FROM boxes WHERE id = $boxId")->fetch();
@@ -438,7 +632,7 @@ try {
     // ---- /api/items/{id} -----------------------------------------------
     if (($segments[0] ?? null) === 'items' && count($segments) === 2) {
         $itemId = (int)$segments[1];
-        $item = api_find_item($pdo, $itemId, $ownerId);
+        $item = api_find_item($pdo, $itemId, $groupId);
         if (!$item) {
             json_error('Item not found', 404);
         }
@@ -455,12 +649,12 @@ try {
             $quantity = isset($body['quantity']) ? max(1, (int)$body['quantity']) : (int)$item['quantity'];
             $pdo->prepare('UPDATE items SET name = ?, quantity = ? WHERE id = ?')->execute([$name, $quantity, $itemId]);
             if (!empty($body['box_id'])) {
-                if (!move_item_to($pdo, $itemId, $ownerId, 'box:' . (int)$body['box_id'])) {
-                    json_error('box_id must be one of your own boxes', 422);
+                if (!move_item_to($pdo, $itemId, $groupId, 'box:' . (int)$body['box_id'])) {
+                    json_error('box_id must be a box in this group', 422);
                 }
             } elseif (!empty($body['place_id'])) {
-                if (!move_item_to($pdo, $itemId, $ownerId, 'place:' . (int)$body['place_id'])) {
-                    json_error('place_id must be one of your own places', 422);
+                if (!move_item_to($pdo, $itemId, $groupId, 'place:' . (int)$body['place_id'])) {
+                    json_error('place_id must be a place in this group', 422);
                 }
             }
             $row = $pdo->query("SELECT * FROM items WHERE id = $itemId")->fetch();
@@ -490,7 +684,7 @@ try {
 
     // ---- /api/barcodes[/...] -------------------------------------------
     // This register is shared by every account on the install (same as the
-    // /barcodes page) — it isn't scoped to $ownerId, just to being logged in.
+    // /barcodes page) — it isn't scoped to $groupId, just to being logged in.
     if (($segments[0] ?? null) === 'barcodes') {
         // /api/barcodes
         if (count($segments) === 1) {

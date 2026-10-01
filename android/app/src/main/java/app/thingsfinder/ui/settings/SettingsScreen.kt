@@ -24,6 +24,8 @@ import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FileUpload
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Visibility
@@ -67,7 +69,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.thingsfinder.BuildConfig
 import app.thingsfinder.R
+import app.thingsfinder.domain.AccountRules
+import app.thingsfinder.sync.ActiveGroup
 import app.thingsfinder.sync.CloudState
+import app.thingsfinder.sync.RemoteGroup
 import app.thingsfinder.sync.ServerUrl
 import app.thingsfinder.ui.common.UiMessage
 import app.thingsfinder.ui.common.containerFactory
@@ -80,8 +85,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Which account dialog is open. */
+private enum class AuthMode { SignIn, Register }
+
 @Composable
 fun SettingsScreen(
+    onOpenGroups: () -> Unit = {},
     vm: SettingsViewModel = viewModel(
         factory = containerFactory {
             SettingsViewModel(it.settings, it.backup, it.files, it.cloudSession, it.cloudApi, it.syncEngine, it.databaseFiles)
@@ -96,7 +105,7 @@ fun SettingsScreen(
     val pendingDb by vm.pendingDbImport.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
-    var signInOpen by rememberSaveable { mutableStateOf(false) }
+    var authMode by rememberSaveable { mutableStateOf<AuthMode?>(null) }
     var confirmSignOut by remember { mutableStateOf(false) }
     LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it.resolve(context)) } }
 
@@ -121,7 +130,9 @@ fun SettingsScreen(
         busy = busy,
         snackbar = snackbar,
         onSyncEnabledChange = vm::setSyncEnabled,
-        onSignIn = { signInOpen = true },
+        onSignIn = { authMode = AuthMode.SignIn },
+        onRegister = { authMode = AuthMode.Register },
+        onOpenGroups = onOpenGroups,
         onSignOut = { confirmSignOut = true },
         onSyncNow = vm::syncNow,
         onLookupChange = vm::setExternalLookup,
@@ -131,20 +142,26 @@ fun SettingsScreen(
         onRestoreJson = { restoreJson.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
     )
 
-    if (signInOpen) {
-        SignInDialog(
+    authMode?.let { mode ->
+        val handle: (SignInResult, (UiMessage) -> Unit) -> Unit = { result, onError ->
+            when (result) {
+                SignInResult.Success -> authMode = null
+                is SignInResult.Error -> onError(result.message)
+            }
+        }
+        AuthDialog(
+            register = mode == AuthMode.Register,
             initialServer = cloud.serverUrl,
-            initialUsername = cloud.username.orEmpty(),
+            initialUsername = if (mode == AuthMode.SignIn) cloud.username.orEmpty() else "",
             working = syncing,
-            onSignIn = { server, user, password, onError ->
-                vm.signIn(server, user, password, deviceName()) { result ->
-                    when (result) {
-                        SignInResult.Success -> signInOpen = false
-                        is SignInResult.Error -> onError(result.message)
-                    }
+            onSubmit = { server, user, password, confirm, onError ->
+                if (mode == AuthMode.Register) {
+                    vm.register(server, user, password, confirm, deviceName()) { handle(it, onError) }
+                } else {
+                    vm.signIn(server, user, password, deviceName()) { handle(it, onError) }
                 }
             },
-            onDismiss = { signInOpen = false },
+            onDismiss = { authMode = null },
         )
     }
     if (confirmSignOut) {
@@ -195,6 +212,8 @@ fun SettingsContent(
     snackbar: SnackbarHostState,
     onSyncEnabledChange: (Boolean) -> Unit,
     onSignIn: () -> Unit,
+    onRegister: () -> Unit,
+    onOpenGroups: () -> Unit,
     onSignOut: () -> Unit,
     onSyncNow: () -> Unit,
     onLookupChange: (Boolean) -> Unit,
@@ -212,7 +231,7 @@ fun SettingsContent(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                CloudCard(cloud, syncing, onSyncEnabledChange, onSignIn, onSignOut, onSyncNow)
+                CloudCard(cloud, syncing, onSyncEnabledChange, onSignIn, onRegister, onOpenGroups, onSignOut, onSyncNow)
 
                 SettingsCard {
                     SwitchRow(
@@ -280,6 +299,8 @@ private fun CloudCard(
     syncing: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     onSignIn: () -> Unit,
+    onRegister: () -> Unit,
+    onOpenGroups: () -> Unit,
     onSignOut: () -> Unit,
     onSyncNow: () -> Unit,
 ) {
@@ -300,16 +321,35 @@ private fun CloudCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (cloud.lastError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Button(onClick = onSignIn) {
-                Icon(Icons.AutoMirrored.Outlined.Login, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.cloud_sign_in))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onSignIn) {
+                    Icon(Icons.AutoMirrored.Outlined.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.cloud_sign_in))
+                }
+                OutlinedButton(onClick = onRegister) {
+                    Icon(Icons.Outlined.PersonAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.cloud_create_account))
+                }
             }
         } else {
             Text(
                 stringResource(R.string.cloud_signed_in_as, cloud.username.orEmpty(), host),
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Groups, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    cloud.activeGroup?.let { g ->
+                        if (g.viewOnly) stringResource(R.string.cloud_group_view_only, g.name) else stringResource(R.string.cloud_group, g.name)
+                    } ?: stringResource(R.string.cloud_group_default),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onOpenGroups) { Text(stringResource(R.string.groups_title)) }
+            }
             val status = when {
                 syncing -> stringResource(R.string.cloud_syncing)
                 cloud.lastError != null -> cloud.lastError
@@ -368,31 +408,41 @@ private fun SwitchRow(
     }
 }
 
-/** Server address (defaults to thingsfinder.xyz), username and password; errors stay inline so nothing typed is lost. */
+/**
+ * Sign in, or create an account ([register]: adds "confirm password"):
+ * server address (defaults to thingsfinder.xyz), username and password.
+ * Errors stay inline so nothing typed is lost.
+ */
 @Composable
-private fun SignInDialog(
+private fun AuthDialog(
+    register: Boolean,
     initialServer: String,
     initialUsername: String,
     working: Boolean,
-    onSignIn: (server: String, username: String, password: String, onError: (UiMessage) -> Unit) -> Unit,
+    onSubmit: (server: String, username: String, password: String, confirm: String, onError: (UiMessage) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var server by rememberSaveable { mutableStateOf(initialServer.ifBlank { ServerUrl.DEFAULT }) }
     var username by rememberSaveable { mutableStateOf(initialUsername) }
     // Deliberately not rememberSaveable: a password shouldn't be written into saved instance state.
     var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<UiMessage?>(null) }
     val submit = {
         error = null
-        onSignIn(server, username, password) { error = it }
+        onSubmit(server, username, password, confirm) { error = it }
     }
+    val canSubmit = !working && username.isNotBlank() && password.isNotEmpty() && (!register || confirm.isNotEmpty())
     AlertDialog(
         onDismissRequest = { if (!working) onDismiss() },
-        title = { Text(stringResource(R.string.cloud_sign_in_title)) },
+        title = { Text(stringResource(if (register) R.string.cloud_register_title else R.string.cloud_sign_in_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.cloud_sign_in_text), style = MaterialTheme.typography.bodySmall)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(if (register) R.string.cloud_register_text else R.string.cloud_sign_in_text),
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 OutlinedTextField(
                     value = server,
                     onValueChange = { server = it.trim() },
@@ -405,6 +455,7 @@ private fun SignInDialog(
                     value = username,
                     onValueChange = { username = it },
                     label = { Text(stringResource(R.string.field_username)) },
+                    supportingText = if (register) ({ Text(stringResource(R.string.cloud_username_help)) }) else null,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next),
                     modifier = Modifier.fillMaxWidth(),
@@ -413,6 +464,7 @@ private fun SignInDialog(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text(stringResource(R.string.field_password)) },
+                    supportingText = if (register) ({ Text(stringResource(R.string.cloud_password_help, AccountRules.MIN_PASSWORD)) }) else null,
                     singleLine = true,
                     visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
@@ -423,17 +475,30 @@ private fun SignInDialog(
                             )
                         }
                     },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (!working) submit() }),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = if (register) ImeAction.Next else ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (canSubmit) submit() }),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (register) {
+                    OutlinedTextField(
+                        value = confirm,
+                        onValueChange = { confirm = it },
+                        label = { Text(stringResource(R.string.field_confirm_password)) },
+                        singleLine = true,
+                        isError = confirm.isNotEmpty() && confirm != password,
+                        visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { if (canSubmit) submit() }),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 error?.let { Text(it.text(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (working) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             }
         },
         confirmButton = {
-            TextButton(onClick = submit, enabled = !working && username.isNotBlank() && password.isNotEmpty()) {
-                Text(stringResource(R.string.cloud_sign_in))
+            TextButton(onClick = submit, enabled = canSubmit) {
+                Text(stringResource(if (register) R.string.cloud_create_account else R.string.cloud_sign_in))
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !working) { Text(stringResource(R.string.action_cancel)) } },
@@ -456,9 +521,12 @@ private fun SettingsCard(content: @Composable () -> Unit) {
 @Composable
 private fun SettingsSignedInPreview() = ThingsFinderTheme {
     SettingsContent(
-        cloud = CloudState(username = "tiago", token = "x", lastSyncAt = System.currentTimeMillis() - 5 * 60_000),
+        cloud = CloudState(
+            username = "tiago", token = "x", lastSyncAt = System.currentTimeMillis() - 5 * 60_000,
+            activeGroup = ActiveGroup(1, "Family", RemoteGroup.EDIT),
+        ),
         syncing = false, lookupEnabled = true, busy = false, snackbar = remember { SnackbarHostState() },
-        onSyncEnabledChange = {}, onSignIn = {}, onSignOut = {}, onSyncNow = {}, onLookupChange = {},
+        onSyncEnabledChange = {}, onSignIn = {}, onRegister = {}, onOpenGroups = {}, onSignOut = {}, onSyncNow = {}, onLookupChange = {},
         onExportDatabase = {}, onImportDatabase = {}, onExportJson = {}, onRestoreJson = {},
     )
 }
@@ -468,7 +536,7 @@ private fun SettingsSignedInPreview() = ThingsFinderTheme {
 private fun SettingsSignedOutPreview() = ThingsFinderTheme {
     SettingsContent(
         cloud = CloudState(), syncing = false, lookupEnabled = true, busy = false, snackbar = remember { SnackbarHostState() },
-        onSyncEnabledChange = {}, onSignIn = {}, onSignOut = {}, onSyncNow = {}, onLookupChange = {},
+        onSyncEnabledChange = {}, onSignIn = {}, onRegister = {}, onOpenGroups = {}, onSignOut = {}, onSyncNow = {}, onLookupChange = {},
         onExportDatabase = {}, onImportDatabase = {}, onExportJson = {}, onRestoreJson = {},
     )
 }
