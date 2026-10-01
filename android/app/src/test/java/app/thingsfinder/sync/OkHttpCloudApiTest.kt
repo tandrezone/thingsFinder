@@ -62,4 +62,66 @@ class OkHttpCloudApiTest {
         assertEquals(null, ServerUrl.normalize("http://192.168.1.5"))
         assertEquals(null, ServerUrl.normalize("https://"))
     }
+
+    @Test fun `register posts like login and returns the new personal group`() = runBlocking {
+        server.enqueue(json(201, """{"token":"t2","user":{"id":9,"username":"ana"},"group":{"id":4,"name":"ana","role":"owner","permission":"edit","member_count":1,"invite":{"url":"https://h/join/abc","token":"abc","key":"K7F39QX2"}}}"""))
+        val r = api.register(base, "ana", "longpassword", "Pixel")
+        val value = (r as ApiResult.Success).value
+        assertEquals("t2", value.token)
+        assertEquals(4L, value.group!!.id)
+        assertTrue(value.group!!.isOwner)
+        assertEquals("K7F39QX2", value.group!!.invite!!.key)
+        val req = server.takeRequest()
+        assertEquals("/api/auth/register", req.path)
+        assertEquals("POST", req.method)
+        server.enqueue(json(409, """{"error":"Username already taken"}"""))
+        assertEquals(ApiResult.HttpError(409, "Username already taken"), api.register(base, "ana", "longpassword", "Pixel"))
+    }
+
+    @Test fun `group calls use the right verbs and paths`() = runBlocking {
+        server.enqueue(json(200, """{"groups":[{"id":1,"name":"tiago","role":"owner","permission":"edit","member_count":1,"invite":null},{"id":2,"name":"Club","role":"member","permission":"view","member_count":5}],"default_group_id":1}"""))
+        val list = (api.groups(base, "tok") as ApiResult.Success).value
+        assertEquals(1L, list.defaultGroupId)
+        assertTrue(list.groups[1].viewOnly && list.groups[1].invite == null)
+        server.takeRequest().let { assertEquals("GET" to "/api/groups", it.method to it.path) }
+
+        server.enqueue(json(200, """{"deleted":true}"""))
+        assertEquals(ApiResult.Success(Unit), api.deleteGroup(base, "tok", 2))
+        server.takeRequest().let { assertEquals("DELETE" to "/api/groups/2", it.method to it.path) }
+
+        server.enqueue(json(200, """{"group":{"id":2,"name":"Club 2"}}"""))
+        assertEquals("Club 2", (api.renameGroup(base, "tok", 2, "Club 2") as ApiResult.Success).value.name)
+        server.takeRequest().let {
+            assertEquals("PUT" to "/api/groups/2", it.method to it.path)
+            assertEquals("""{"name":"Club 2"}""", it.body.readUtf8())
+        }
+
+        server.enqueue(json(200, """{"removed":true}"""))
+        api.removeMember(base, "tok", 2, 7)
+        server.takeRequest().let { assertEquals("DELETE" to "/api/groups/2/members/7", it.method to it.path) }
+
+        server.enqueue(json(200, """{"left":true}"""))
+        api.leaveGroup(base, "tok", 2)
+        server.takeRequest().let { assertEquals("POST" to "/api/groups/2/leave", it.method to it.path) }
+    }
+
+    @Test fun `join sends either the token or name and key, and 404 means no such invite`() = runBlocking {
+        server.enqueue(json(200, """{"group":{"id":3,"name":"Family"}}"""))
+        api.joinGroup(base, "tok", JoinGroupRequest(token = "abc"))
+        assertEquals("""{"token":"abc"}""", server.takeRequest().body.readUtf8())
+        server.enqueue(json(404, """{"error":"Invite not found"}"""))
+        assertEquals(ApiResult.HttpError(404, "Invite not found"), api.joinGroup(base, "tok", JoinGroupRequest(name = "Family", key = "K7F39QX2")))
+        assertEquals("""{"name":"Family","key":"K7F39QX2"}""", server.takeRequest().body.readUtf8())
+    }
+
+    @Test fun `sync sends group_id only when set, and reads the group back`() = runBlocking {
+        server.enqueue(json(200, """{"server_time":1,"group":{"id":5,"name":"Family","permission":"view","role":"member"}}"""))
+        val r = api.sync(base, "tok", SyncRequest(since = 0, places = listOf(SyncPlace("p1", "Garage", "0123456789abcdef0123456789abcdef", 1))))
+        assertEquals(SyncGroup(5, "Family", "view", "member"), (r as ApiResult.Success).value.group)
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(!body.contains("group_id") && body.contains("\"share_token\":\"0123456789abcdef0123456789abcdef\""))
+        server.enqueue(json(200, """{"server_time":2}"""))
+        api.sync(base, "tok", SyncRequest(since = 1, groupId = 5))
+        assertTrue(server.takeRequest().body.readUtf8().contains("\"group_id\":5"))
+    }
 }

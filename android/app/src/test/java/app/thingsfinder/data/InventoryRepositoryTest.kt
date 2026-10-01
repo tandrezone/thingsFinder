@@ -121,4 +121,25 @@ class InventoryRepositoryTest {
         assertNotNull(db.barcodeDao().find("111"))
         assertNull(db.barcodeDao().find("222")) // suggestions are never saved on their own
     }
+
+    @Test fun `places get their own share token, found by it like boxes`() = runBlocking {
+        val garage = repo.createPlace("Garage")!!
+        val attic = repo.createPlace("Attic")!!
+        val token = db.placeDao().get(garage)!!.shareToken
+        assertTrue(token.matches(Regex("^[0-9a-f]{32}$")))
+        assertTrue(token != db.placeDao().get(attic)!!.shareToken)
+        assertEquals(garage, repo.findPlaceByToken(token)?.id)
+        assertNull(repo.findBoxByToken(token))
+    }
+
+    @Test fun `taking one out lowers the quantity but never deletes`() = runBlocking {
+        val place = repo.createPlace("Garage")!!
+        repo.addItem(ItemLocation.InPlace(place), "Batteries", 2)
+        val id = db.itemDao().getAll().single().id
+        assertEquals(1, repo.takeOne(id))
+        assertEquals(1, db.itemDao().get(id)!!.quantity)
+        assertNull(repo.takeOne(id)) // the last one is a delete, which the UI confirms
+        assertEquals(1, db.itemDao().get(id)!!.quantity)
+        assertNull(repo.takeOne(999))
+    }
 }

@@ -7,10 +7,12 @@ import app.thingsfinder.data.FakeSettings
 import app.thingsfinder.data.InventoryRepository
 import app.thingsfinder.data.db.ThingsFinderDatabase
 import app.thingsfinder.data.inMemoryDb
+import app.thingsfinder.domain.BoxLinks
 import app.thingsfinder.domain.ItemLocation
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -163,7 +165,7 @@ class SyncEngineTest {
         val place = inventory.createPlace("Garage")!!
         val uuid = db.placeDao().get(place)!!.uuid
         inventory.deletePlace(place)
-        api.next = { ApiResult.Success(SyncResponse(serverTime = 77, changes = SyncChanges(places = listOf(SyncPlace(uuid, "Garage (edited on web)", 99_000))))) }
+        api.next = { ApiResult.Success(SyncResponse(serverTime = 77, changes = SyncChanges(places = listOf(SyncPlace(uuid, "Garage (edited on web)", updatedAt = 99_000))))) }
         engine.syncNow()
         assertEquals("Garage (edited on web)", db.placeDao().findByUuid(uuid)!!.name)
         assertEquals(0, session.flow.value.cursor)
@@ -175,5 +177,129 @@ class SyncEngineTest {
         api.next = { ApiResult.Success(SyncResponse(serverTime = 2)) }
         engine.syncNow()
         assertTrue(api.requests[1].barcodes.isEmpty())
+    }
+
+    @Test fun `places carry their share token both ways`() = runBlocking {
+        val place = inventory.createPlace("Garage")!!
+        val cellar = inventory.createPlace("Cellar")!!
+        val local = db.placeDao().get(place)!!
+        val cellarToken = db.placeDao().get(cellar)!!.shareToken
+        val webToken = "fedcba9876543210fedcba9876543210"
+        clock = 20_000
+        api.next = {
+            ApiResult.Success(
+                SyncResponse(
+                    serverTime = 5,
+                    changes = SyncChanges(
+                        places = listOf(
+                            SyncPlace(local.uuid, "Old name", webToken, updatedAt = 5_000), // older: our name stays, the token is adopted
+                            SyncPlace("web-place-1", "Attic", "00112233445566778899aabbccddeeff", updatedAt = 12_000),
+                            SyncPlace("web-place-2", "Shed", cellarToken, updatedAt = 12_000), // token taken here: gets a new one
+                        ),
+                    ),
+                ),
+            )
+        }
+        engine.syncNow()
+        assertEquals(local.shareToken, api.requests.single().places.first { it.uuid == local.uuid }.shareToken)
+        assertEquals(webToken, db.placeDao().get(place)!!.shareToken)
+        assertEquals("Garage", db.placeDao().get(place)!!.name)
+        assertEquals("Attic", db.placeDao().findByToken("00112233445566778899aabbccddeeff")!!.name)
+        val shed = db.placeDao().findByUuid("web-place-2")!!
+        assertTrue(shed.shareToken != cellarToken && BoxLinks.isValidToken(shed.shareToken))
+    }
+
+    @Test fun `the server's default group is remembered and sent from then on`() = runBlocking {
+        api.next = { ApiResult.Success(SyncResponse(serverTime = 1, group = SyncGroup(7, "Family", RemoteGroup.VIEW))) }
+        engine.syncNow()
+        assertNull(api.requests[0].groupId)
+        assertEquals(ActiveGroup(7, "Family", RemoteGroup.VIEW), session.flow.value.activeGroup)
+        assertTrue(session.flow.value.activeGroup!!.viewOnly)
+        engine.syncNow()
+        assertEquals(7L, api.requests[1].groupId)
+    }
+
+    @Test fun `view-only skips are permanent and explained`() = runBlocking {
+        val place = inventory.createPlace("Garage")!!
+        val uuid = db.placeDao().get(place)!!.uuid
+        clock = 20_000
+        api.next = { ApiResult.Success(SyncResponse(serverTime = 1, skipped = listOf(SyncSkipped("places", uuid, SyncSkipped.READ_ONLY)))) }
+        val outcome = engine.syncNow() as SyncOutcome.Synced
+        assertFalse(outcome.held)
+        assertEquals(19_999, session.flow.value.lastPushAt)
+        assertEquals(SyncEngine.VIEW_ONLY_MESSAGE, session.flow.value.lastError)
+    }
+
+    @Test fun `switching group pushes first, then swaps the inventory but keeps barcodes`() = runBlocking {
+        val place = inventory.createPlace("Garage")!!
+        inventory.addItem(ItemLocation.InPlace(place), "Rake", 1)
+        inventory.deletePlace(inventory.createPlace("Old")!!)
+        BarcodeRepository(db, FakeLookup(), FakeSettings()).save("123", "Tape")
+        session.setActiveGroup(ActiveGroup(1, "tiago"))
+        clock = 20_000
+        api.next = { req ->
+            if (req.groupId == 1L) {
+                ApiResult.Success(SyncResponse(serverTime = 1, group = SyncGroup(1, "tiago")))
+            } else {
+                ApiResult.Success(
+                    SyncResponse(
+                        serverTime = 2,
+                        changes = SyncChanges(places = listOf(SyncPlace("fam-1", "Kitchen", updatedAt = 3_000))),
+                        group = SyncGroup(2, "Family renamed"),
+                    ),
+                )
+            }
+        }
+        val outcome = engine.switchGroup(ActiveGroup(2, "Family"))
+        assertTrue(outcome is SwitchOutcome.Switched && outcome.pull is SyncOutcome.Synced)
+        assertEquals(listOf(1L, 2L), api.requests.map { it.groupId })
+        // The pending edits and the delete went to the old group…
+        assertEquals(listOf("Garage"), api.requests[0].places.map { it.name })
+        assertEquals(1, api.requests[0].deleted.size)
+        // …and the new group starts from scratch.
+        assertEquals(0, api.requests[1].since)
+        assertTrue(api.requests[1].places.isEmpty() && api.requests[1].items.isEmpty() && api.requests[1].deleted.isEmpty())
+        assertEquals(listOf("Kitchen"), db.placeDao().getAll().map { it.name })
+        assertTrue(db.itemDao().getAll().isEmpty())
+        assertTrue(db.tombstoneDao().getAll().isEmpty())
+        assertEquals("Tape", db.barcodeDao().find("123")!!.name)
+        assertEquals(ActiveGroup(2, "Family renamed"), session.flow.value.activeGroup)
+        assertEquals(2, session.flow.value.cursor)
+    }
+
+    @Test fun `a failed push refuses the switch and changes nothing`() = runBlocking {
+        val place = inventory.createPlace("Garage")!!
+        session.setActiveGroup(ActiveGroup(1, "tiago"))
+        api.next = { ApiResult.NetworkError(IOException("offline")) }
+        assertTrue(engine.switchGroup(ActiveGroup(2, "Family")) is SwitchOutcome.Refused)
+        assertEquals("Garage", db.placeDao().get(place)!!.name)
+        assertEquals(ActiveGroup(1, "tiago"), session.flow.value.activeGroup)
+        assertEquals(1, api.requests.size)
+    }
+
+    @Test fun `rows the server held back refuse the switch`() = runBlocking {
+        val place = inventory.createPlace("Garage")!!
+        val uuid = db.placeDao().get(place)!!.uuid
+        clock = 20_000
+        api.next = { ApiResult.Success(SyncResponse(serverTime = 1, skipped = listOf(SyncSkipped("places", uuid, "place not found")))) }
+        assertTrue(engine.switchGroup(ActiveGroup(2, "Family")) is SwitchOutcome.Refused)
+        assertEquals("Garage", db.placeDao().get(place)!!.name)
+        assertNull(session.flow.value.activeGroup)
+    }
+
+    @Test fun `losing access to the group says so, and switching away still works`() = runBlocking {
+        inventory.createPlace("Garage")
+        session.setActiveGroup(ActiveGroup(5, "Club"))
+        api.next = { req ->
+            if (req.groupId == 5L) ApiResult.HttpError(403, "Not a member of that group") else ApiResult.Success(SyncResponse(serverTime = 3, group = SyncGroup(1, "tiago")))
+        }
+        val outcome = engine.syncNow()
+        assertTrue(outcome is SyncOutcome.NoAccess)
+        assertTrue(session.flow.value.lastError!!.contains("Club"))
+        // Back to the server's default group: nothing can be sent to "Club" any more, so the switch goes ahead.
+        assertTrue(engine.switchGroup(null) is SwitchOutcome.Switched)
+        assertTrue(db.placeDao().getAll().isEmpty())
+        assertNull(api.requests.last().groupId)
+        assertEquals(ActiveGroup(1, "tiago"), session.flow.value.activeGroup)
     }
 }

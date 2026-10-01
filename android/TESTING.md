@@ -9,12 +9,14 @@ cd android
 
 | Suite | What it covers | Needs |
 |---|---|---|
-| `domain/*Test` | Slugs, JSON import parser, OCR line cleaning, box-link parsing, quantity/name rules | JVM only |
+| `domain/*Test` | Slugs, JSON import parser, OCR line cleaning, link parsing (box / place / add / remove / join, app + web forms), invite keys, quantity/name/account rules | JVM only |
 | `lookup/OpenBarcodeLookupTest` | Open Food Facts → UPCitemdb fallback, 5xx, malformed JSON, timeouts, no request for blank input (MockWebServer) | JVM only |
 | `data/InventoryRepositoryTest` | slug de-dup, box move re-slug, barcode "known wins", item moves, cascade delete, search escaping, lookup toggle | Robolectric + in-memory Room |
-| `data/BackupRepositoryTest` | export → restore round trip (share tokens kept), rejecting a non-backup file | Robolectric + in-memory Room |
-| `sync/SyncEngineTest` | first/incremental push, tombstones sent then cleared (kept on failure), LWW on pull, server deletes, skipped rows retried, refused delete → full pull, 401 signs out | Robolectric + in-memory Room |
-| `sync/OkHttpCloudApiTest` | login/sync wire format (snake_case, bearer header, nulls omitted), 401/404/HTML/disconnect mapping, server URL normalisation | JVM only (MockWebServer) |
+| `data/BackupRepositoryTest` | export → restore round trip (box and place share tokens kept), old backups without place tokens, rejecting a non-backup file | Robolectric + in-memory Room |
+| `data/MigrationTest` | a v2 database built from `schemas/…/2.json` migrates to v3 (every place gets its own token) and passes Room's schema check | Robolectric |
+| `sync/SyncEngineTest` | first/incremental push, tombstones sent then cleared (kept on failure), LWW on pull, server deletes, skipped rows retried, refused delete → full pull, 401 signs out, place share tokens both ways, default group remembered + `group_id` sent, "read only" skips, group switch (push → wipe → pull, barcodes kept; refused when the push fails or rows are held), 403 → switch away | Robolectric + in-memory Room |
+| `sync/OkHttpCloudApiTest` | login/register/sync/groups wire format (snake_case, bearer header, verbs and paths, nulls and `group_id` omitted), 401/404/409/HTML/disconnect mapping, server URL normalisation | JVM only (MockWebServer) |
+| `ui/GroupsViewModelTest` | list + active selection, join by key (dash/case) → offer to switch → switch, bad link / unknown invite, leaving the active group switches away first (and is refused if the push fails) | Robolectric + in-memory Room, fake API |
 | `ui/ViewModelTests` | Loading → Content / NotFound, Deleted event, add-item message, barcode Looking → Suggested, JSON review → add, OCR merge, search + SavedStateHandle | Robolectric + in-memory Room |
 
 `@Preview`s for every key screen (phone + tablet, light + dark, and the
@@ -54,7 +56,13 @@ tablet or foldable profile.
 - [ ] Box screen shows a QR code (white background even in dark theme). *Share label* opens the share sheet with a 50×30 mm PNG; *Share QR* shares the bare code.
 - [ ] *Places → scan icon*: scan that QR from another screen/printout → opens the box.
 - [ ] Scan the QR with the system camera app → offers to open thingsFinder → opens the box.
-- [ ] Scan a random QR (e.g. a URL) → "That isn't a thingsFinder box label."
+- [ ] Scan a random QR (e.g. a URL) → "That isn't a thingsFinder label."
+
+**Add / remove QR codes**
+- [ ] Box screen shows *Add item* and *Remove item* codes under the box QR; place screen shows them under "QR codes". *Label* shares a 50×30 mm PNG ("Box name" + "Scan to add" / "Scan to remove"), *QR* the bare code.
+- [ ] Scan *Add item* (in-app scanner and system camera) → the box/place opens with the add-item sheet up. Rotate: still open; back closes it.
+- [ ] Scan *Remove item* → banner "Tap an item to remove it"; −1 lowers the quantity, −1 on the last one and the bin ask to delete; *Done* leaves remove mode.
+- [ ] In-app scanner: a web label `https://host/add/{token}` / `/remove/{token}` opens the matching box, or the place if no box has that token. Unknown token → "No box or place on this phone matches that code."
 
 **Search**
 - [ ] Search "glue" finds items in boxes and loose ones; tapping a result opens the right box/place.
@@ -75,6 +83,19 @@ tablet or foldable profile.
 - [ ] Revoke the token (delete the row in `api_tokens` on the server) → next sync shows "signed out", sign in again works.
 - [ ] Toggle *Sync to cloud* off → no requests (check the server log); back on → syncs.
 - [ ] Sign out → data stays on the phone; sign in again → no duplicates.
+- [ ] *Create account*: short password / mismatched confirmation / bad username → inline error; an existing username → "already taken"; on a server with registration off → "doesn't allow new accounts". Success → signed in, "Group: <username>", the phone's places appear on the website.
+
+**Groups** (signed in; server with groups)
+- [ ] Settings shows "Group: …" and a *Groups* button. Groups lists your groups, the one on this phone ticked.
+- [ ] *Create a group* "Family" → offered to switch → switch: the phone's places disappear (they're in your personal group on the website), Family is empty; barcodes are still there.
+- [ ] Add a box in Family; switch back to your personal group → its places come back; switch to Family again → the box is there.
+- [ ] Airplane mode, add an item, then try to switch → refused with a message, nothing changes.
+- [ ] Invite card: QR, link, name, key; *Share* sends a text with link + key; *Copy link* / *Copy key* work.
+- [ ] Second account on another phone: join via *Scan an invite QR*, via *Paste an invite link*, via name + key typed as `k7f3 9qx2` → joins; a wrong key → "No group matches that invite".
+- [ ] Open `thingsfinder://join/{token}` from another app (e.g. `adb shell am start -d thingsfinder://join/…`) → Groups opens and asks to join.
+- [ ] Owner: rename (Settings label follows), *New invite* (old link → not found), remove a member (their next sync says they're no longer a member), delete the group (confirmation; if it was on this phone, the phone switches to the default group first).
+- [ ] Member: *Leave group* on the group shown on this phone → switches to the default group first, then leaves.
+- [ ] A view-only member: Settings/Groups say "view only"; an edit made on the phone shows "This group is view-only — …" after the next sync and doesn't reach the website.
 
 **Database file**
 - [ ] *Export database* → a `.sqlite` file that opens in DB Browser for SQLite with places/boxes/items.
@@ -91,4 +112,4 @@ tablet or foldable profile.
 - [ ] Slow device (Android Studio → Emulator → Settings → throttle CPU): loading spinners show and resolve.
 - [ ] TalkBack: every icon button announces an action ("Manage Garage", "Scan", "Back").
 
-**Not applicable on Android** (web features intentionally not ported; see MIGRATION_PLAN.md): login/setup, logout, People/sharing, account switching, change password, expired/revoked tokens.
+**Not applicable on Android** (web features intentionally not ported; see MIGRATION_PLAN.md): setup, People/sharing pages (groups replace them on the phone), account switching, change password.
