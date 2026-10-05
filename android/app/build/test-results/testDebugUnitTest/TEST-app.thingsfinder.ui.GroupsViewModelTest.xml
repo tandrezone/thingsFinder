@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.ui.GroupsViewModelTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:24:53.321Z" hostname="TIAGOANDRE-JAVR" time="5.456">
+  <properties/>
+  <testcase name="if pending changes can't be sent, leaving is refused" classname="app.thingsfinder.ui.GroupsViewModelTest" time="5.121"/>
+  <testcase name="leaving the group on this phone switches away first" classname="app.thingsfinder.ui.GroupsViewModelTest" time="0.158"/>
+  <testcase name="lists groups and selects the active one" classname="app.thingsfinder.ui.GroupsViewModelTest" time="0.041"/>
+  <testcase name="a bad link or unknown invite is an error, nothing joined" classname="app.thingsfinder.ui.GroupsViewModelTest" time="0.052"/>
+  <testcase name="joining by key accepts the dashed lower-case form and offers to switch" classname="app.thingsfinder.ui.GroupsViewModelTest" time="0.083"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

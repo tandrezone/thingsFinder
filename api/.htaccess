@@ -1,0 +1,15 @@
+# The API's own front-controller rules (Apache), used when a virtual host
+# points straight at this folder (standalone). The web app reaches the API
+# through web/api.php instead, since api/ is outside its web root. Everything
+# goes to index.php — including real files, so nothing in src/ or routes/ is
+# ever reachable directly.
+
+RewriteEngine On
+
+# Pass `Authorization: Bearer …` (the Android app's token) through to PHP;
+# some Apache/PHP setups drop it otherwise.
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+RewriteRule ^(?!index\.php$) index.php [L]

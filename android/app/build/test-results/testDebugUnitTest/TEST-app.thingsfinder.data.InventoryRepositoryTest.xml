@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.data.InventoryRepositoryTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:24:59.162Z" hostname="TIAGOANDRE-JAVR" time="0.766">
+  <properties/>
+  <testcase name="a registered barcode always wins over the typed name" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.072"/>
+  <testcase name="taking one out lowers the quantity but never deletes" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.071"/>
+  <testcase name="box slugs are unique per place, and a move re-deduplicates" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.08"/>
+  <testcase name="place slugs are de-duplicated like the web app" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.072"/>
+  <testcase name="deleting a place cascades to its boxes and every item" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.119"/>
+  <testcase name="barcode resolution - register, then suggestion only when enabled" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.054"/>
+  <testcase name="places get their own share token, found by it like boxes" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.062"/>
+  <testcase name="search is a case-insensitive substring match with wildcards escaped" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.092"/>
+  <testcase name="an unknown barcode plus a name adds the item and remembers the barcode" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.062"/>
+  <testcase name="items move between boxes and places, keeping exactly one parent" classname="app.thingsfinder.data.InventoryRepositoryTest" time="0.08"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

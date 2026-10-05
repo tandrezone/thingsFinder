@@ -1,0 +1,2 @@
+# Internal PHP, only ever include()d by ../index.php.
+Require all denied

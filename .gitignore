@@ -1,2 +1,6 @@
 /data/*.sqlite
 /data/*.sqlite-journal
+
+# Composer dependencies (run `composer install`) and local settings
+/vendor/
+/.env

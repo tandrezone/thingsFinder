@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.sync.SyncEngineTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.755Z" hostname="TIAGOANDRE-JAVR" time="0.977">
+  <properties/>
+  <testcase name="server changes are applied, newer local edits win" classname="app.thingsfinder.sync.SyncEngineTest" time="0.082"/>
+  <testcase name="rows the server couldn't place are sent again next time" classname="app.thingsfinder.sync.SyncEngineTest" time="0.058"/>
+  <testcase name="first sync sends everything, later syncs only what changed" classname="app.thingsfinder.sync.SyncEngineTest" time="0.071"/>
+  <testcase name="deletes travel as tombstones and are cleared once delivered" classname="app.thingsfinder.sync.SyncEngineTest" time="0.057"/>
+  <testcase name="barcodes pulled from the server are not pushed back" classname="app.thingsfinder.sync.SyncEngineTest" time="0.055"/>
+  <testcase name="server deletes remove rows unless edited here afterwards" classname="app.thingsfinder.sync.SyncEngineTest" time="0.057"/>
+  <testcase name="losing access to the group says so, and switching away still works" classname="app.thingsfinder.sync.SyncEngineTest" time="0.055"/>
+  <testcase name="rows the server held back refuse the switch" classname="app.thingsfinder.sync.SyncEngineTest" time="0.053"/>
+  <testcase name="the server's default group is remembered and sent from then on" classname="app.thingsfinder.sync.SyncEngineTest" time="0.064"/>
+  <testcase name="switching group pushes first, then swaps the inventory but keeps barcodes" classname="app.thingsfinder.sync.SyncEngineTest" time="0.076"/>
+  <testcase name="tombstones survive a failed sync" classname="app.thingsfinder.sync.SyncEngineTest" time="0.059"/>
+  <testcase name="a delete the server refused triggers a full pull next time" classname="app.thingsfinder.sync.SyncEngineTest" time="0.066"/>
+  <testcase name="a failed push refuses the switch and changes nothing" classname="app.thingsfinder.sync.SyncEngineTest" time="0.051"/>
+  <testcase name="401 signs the phone out, disabled or signed out does nothing" classname="app.thingsfinder.sync.SyncEngineTest" time="0.044"/>
+  <testcase name="places carry their share token both ways" classname="app.thingsfinder.sync.SyncEngineTest" time="0.064"/>
+  <testcase name="view-only skips are permanent and explained" classname="app.thingsfinder.sync.SyncEngineTest" time="0.062"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -3,7 +3,6 @@ package app.thingsfinder.sync
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,8 +50,11 @@ class OkHttpCloudApiTest {
         assertTrue(api.sync(base, "t", SyncRequest(0)) is ApiResult.BadResponse)
         server.enqueue(json(404, """{"error":"Not found"}"""))
         assertEquals(ApiResult.HttpError(404, "Not found"), api.sync(base, "t", SyncRequest(0)))
-        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
-        assertTrue(api.sync(base, "t", SyncRequest(0)) is ApiResult.NetworkError)
+        // Nothing listening (OkHttp quietly retries a dropped connection, so a disconnect isn't reliable here).
+        val dead = MockWebServer().apply { start() }
+        val deadUrl = dead.url("/").toString().trimEnd('/')
+        dead.shutdown()
+        assertTrue(api.sync(deadUrl, "t", SyncRequest(0)) is ApiResult.NetworkError)
     }
 
     @Test fun `server urls are normalised to https`() {

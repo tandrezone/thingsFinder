@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.sync.OkHttpCloudApiTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:24:52.272Z" hostname="TIAGOANDRE-JAVR" time="0.607">
+  <properties/>
+  <testcase name="sync sends the bearer token and snake_case fields" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.474"/>
+  <testcase name="register posts like login and returns the new personal group" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.021"/>
+  <testcase name="wrong password is Unauthorized with the server's message" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.008"/>
+  <testcase name="join sends either the token or name and key, and 404 means no such invite" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.013"/>
+  <testcase name="sync sends group_id only when set, and reads the group back" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.019"/>
+  <testcase name="group calls use the right verbs and paths" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.035"/>
+  <testcase name="server urls are normalised to https" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.004"/>
+  <testcase name="login posts credentials and parses the token" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.013"/>
+  <testcase name="html error page is a BadResponse, 404 an HttpError, no connection a NetworkError" classname="app.thingsfinder.sync.OkHttpCloudApiTest" time="0.02"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

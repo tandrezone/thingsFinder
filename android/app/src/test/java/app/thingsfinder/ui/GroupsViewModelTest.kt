@@ -72,7 +72,10 @@ class GroupsViewModelTest {
         assertEquals(family, vm.offerSwitch.firstMatching { it != null })
         assertEquals(R.string.groups_joined, vm.messages.first().res)
         vm.switchTo(family)
-        assertEquals(ActiveGroup(2, "g"), session.flow.firstMatching { it.activeGroup?.id == 2L }.activeGroup)
+        session.flow.firstMatching { it.activeGroup?.id == 2L }
+        vm.working.firstMatching { !it }
+        // The group list (reloaded after the switch) has the last word on the name.
+        assertEquals(ActiveGroup(2, "Family"), session.flow.value.activeGroup)
         assertEquals(listOf(1L, 2L), api.requests.map { it.groupId })
     }
 
@@ -88,6 +91,7 @@ class GroupsViewModelTest {
     @Test fun `leaving the group on this phone switches away first`() = runBlocking {
         api.groups += family
         session.setActiveGroup(ActiveGroup(2, "Family"))
+        vm.refresh()
         InventoryRepository(db).createPlace("Family garage")
         vm.groups.firstMatching { it is UiState.Content && it.data.groups.size == 2 }
         vm.leave(family)
@@ -102,6 +106,7 @@ class GroupsViewModelTest {
     @Test fun `if pending changes can't be sent, leaving is refused`() = runBlocking {
         api.groups += family
         session.setActiveGroup(ActiveGroup(2, "Family"))
+        vm.refresh()
         api.next = { ApiResult.NetworkError(IOException("offline")) }
         vm.groups.firstMatching { it is UiState.Content && it.data.groups.size == 2 }
         vm.leave(family)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the Android sync API (token auth + POST /api/sync).
 #
-#   php -S 127.0.0.1:8765 router.php &      # with a fresh data/ dir and two users:
+#   php -S 127.0.0.1:8765 -t web router.php &   # with a fresh data/ dir and two users:
 #   php -r 'require "includes/helpers.php"; require "includes/db.php";
 #           $p = get_db(); create_user($p, "tiago", "secret123"); create_user($p, "other", "secret123");'
 #   BASE=http://127.0.0.1:8765 tests/sync_smoke.sh

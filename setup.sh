@@ -2,22 +2,26 @@
 # =============================================================================
 # thingsFinder — Apache virtual host setup for Debian/Ubuntu
 #
-#   Installs PHP + Apache (mod_php), configures a VirtualHost for the domain,
-#   locks down internal files, prepares the SQLite data directory, optionally
-#   issues a Let's Encrypt certificate, and then verifies everything.
+#   Installs PHP + Apache (mod_php), configures a VirtualHost for the domain
+#   with web/ as its DocumentRoot (nothing else in the project is served),
+#   installs Composer dependencies, creates .env
+#   from .env.example, prepares the SQLite data directory, optionally issues a
+#   Let's Encrypt certificate, and then verifies everything.
 #
-#   thingsFinder uses SQLite (data/database.sqlite, created automatically) and
-#   reads no .env file — so there is no MySQL server, DB user or .env to set up.
+#   thingsFinder uses SQLite (data/database.sqlite, created automatically) — so
+#   there is no MySQL server or DB user to set up. Settings live in .env (see
+#   .env.example); an existing .env is never overwritten.
 #
 # Usage (run from the project root, or pass --app-dir):
-#   sudo ./setup-env.sh                              # HTTP vhost for thingsfinder.xyz
-#   sudo ./setup-env.sh --ssl you@example.com        # + Let's Encrypt HTTPS (+ redirect)
-#   sudo ./setup-env.sh --local-hosts                # + map the domain to 127.0.0.1 in /etc/hosts
-#   sudo ./setup-env.sh --verify-only                # only run the checks
+#   sudo ./setup.sh                              # HTTP vhost for thingsfinder.xyz
+#   sudo ./setup.sh --ssl you@example.com        # + Let's Encrypt HTTPS (+ redirect)
+#   sudo ./setup.sh --local-hosts                # + map the domain to 127.0.0.1 in /etc/hosts
+#   sudo ./setup.sh --verify-only                # only run the checks
 #
 # Options:
 #   --domain NAME      Domain (default: thingsfinder.xyz; www.<domain> is added as alias)
-#   --app-dir DIR      Project root / DocumentRoot (default: directory of this script)
+#   --app-dir DIR      Project root (default: directory of this script); the
+#                      DocumentRoot is DIR/web
 #   --ssl EMAIL        Obtain/renew a Let's Encrypt cert via certbot (DNS must already
 #                      point at this server and port 80/443 must be reachable)
 #   --no-ocr           Skip installing tesseract-ocr ("add items from a photo")
@@ -25,6 +29,11 @@
 #   --local-hosts      Add "127.0.0.1 <domain> www.<domain>" to /etc/hosts (local testing)
 #   --force            Overwrite an existing, locally-modified vhost file (a backup is kept)
 #   --verify-only      Skip setup, just run verification
+#
+# Upgrading: a vhost from before web/ existed (DocumentRoot = project root) has
+# its DocumentRoot and <Directory> moved to web/ in place — in <domain>.conf
+# and certbot's <domain>-le-ssl.conf — keeping any other local edits (a backup
+# is kept). Use --force to replace <domain>.conf with the generated one instead.
 #
 # Safe to re-run: packages are only installed when missing, the vhost is only
 # (re)written when absent or with --force, and the SQLite database is never
@@ -43,7 +52,7 @@ FORCE=0
 VERIFY_ONLY=0
 WEB_USER="www-data"
 WEB_GROUP="www-data"
-PHP_MIN_VERSION="8.0"
+PHP_MIN_VERSION="8.1"
 
 # ---------- output helpers ----------------------------------------------------
 if [[ -t 1 ]]; then C_G=$'\e[32m'; C_Y=$'\e[33m'; C_R=$'\e[31m'; C_B=$'\e[1m'; C_0=$'\e[0m'
@@ -55,7 +64,7 @@ err()   { echo "  ${C_R}✘${C_0} $*" >&2; }
 die()   { err "$*"; exit 1; }
 trap 'err "Setup aborted at line $LINENO (exit $?)"' ERR
 
-usage() { sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 # ---------- args --------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
@@ -73,8 +82,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+WEB_ROOT="$APP_DIR/web"   # the only public directory
 SITE_NAME="$DOMAIN"
 VHOST_FILE="/etc/apache2/sites-available/${SITE_NAME}.conf"
+SSL_VHOST_FILE="/etc/apache2/sites-available/${SITE_NAME}-le-ssl.conf"  # written by certbot
 ALIASES=""; [[ $WITH_WWW -eq 1 ]] && ALIASES="www.${DOMAIN}"
 
 # ---------- privilege helpers -------------------------------------------------
@@ -109,9 +120,9 @@ check_os() {
   esac
   command -v apt-get >/dev/null || die "apt-get not found."
   ok "apt-get available"
-  [[ -f "$APP_DIR/index.php" && -f "$APP_DIR/includes/db.php" ]] \
-    || die "$APP_DIR doesn't look like thingsFinder (index.php / includes/db.php missing). Use --app-dir."
-  ok "Project root: $APP_DIR"
+  [[ -f "$WEB_ROOT/index.php" && -f "$APP_DIR/includes/db.php" ]] \
+    || die "$APP_DIR doesn't look like thingsFinder (web/index.php / includes/db.php missing). Use --app-dir."
+  ok "Project root: $APP_DIR (web root: $WEB_ROOT)"
 }
 
 APT_UPDATED=0
@@ -140,7 +151,8 @@ install_dependencies() {
   # Apache + mod_php; PHP extensions the app uses:
   #   pdo_sqlite (database), mbstring (slugs/names), gd+freetype (PNG QR/labels),
   #   curl (barcode name lookups). session/json/random are built into PHP.
-  local pkgs=(apache2 libapache2-mod-php php-cli php-sqlite3 php-mbstring php-gd php-curl curl ca-certificates)
+  #   composer + unzip: PHP dependencies (vlucas/phpdotenv, which reads .env).
+  local pkgs=(apache2 libapache2-mod-php php-cli php-sqlite3 php-mbstring php-gd php-curl curl ca-certificates composer unzip)
   [[ $WITH_OCR -eq 1 ]] && pkgs+=(tesseract-ocr)          # "Add items from a photo"
   [[ -n "$SSL_EMAIL" ]] && pkgs+=(certbot python3-certbot-apache)
   ensure_packages "${pkgs[@]}"
@@ -156,31 +168,29 @@ install_dependencies() {
 # =============================================================================
 render_vhost() {
   local alias_line=""; [[ -n "$ALIASES" ]] && alias_line="    ServerAlias ${ALIASES}"
-  local root_re; root_re="$(printf '%s' "$APP_DIR" | sed 's/[.[\*^$()+?{|]/\\&/g')"
   cat <<EOF
-# Managed by thingsFinder setup-env.sh — re-run with --force to regenerate.
+# Managed by thingsFinder setup.sh — re-run with --force to regenerate.
 <VirtualHost *:80>
     ServerName ${DOMAIN}
 ${alias_line}
     ServerAdmin webmaster@${DOMAIN}
-    DocumentRoot ${APP_DIR}
+
+    # Only web/ is public. The project root around it (.env, vendor/, data/,
+    # includes/, api/, docs/, tests, the Android project) is never served;
+    # PHP still include()s it from disk.
+    DocumentRoot ${WEB_ROOT}
 
     <Directory ${APP_DIR}>
+        Options -Indexes
+        AllowOverride None
+        Require all denied
+    </Directory>
+    <Directory ${WEB_ROOT}>
         Options -Indexes +FollowSymLinks
-        # .htaccess in the project holds the mod_rewrite front-controller rules.
+        # web/.htaccess holds the mod_rewrite front-controller rules.
         AllowOverride All
         Require all granted
     </Directory>
-
-    # Never serve internals: the SQLite database, PHP includes, the Android
-    # project, git metadata, docs and dev-only files. PHP still include()s
-    # these from disk; only direct HTTP access is blocked.
-    <DirectoryMatch "^${root_re}/(data|includes|android|\.git)(/|\$)">
-        Require all denied
-    </DirectoryMatch>
-    <FilesMatch "(\.(sqlite|sqlite-journal|sqlite-wal|sqlite-shm|db|md|sh|tgz|bak|kts|gradle|log)|^router\.php|^\.git.*)\$">
-        Require all denied
-    </FilesMatch>
 
     <IfModule php_module>
         # Photo uploads for OCR are capped at 8MB by the app.
@@ -200,6 +210,23 @@ ${alias_line}
 EOF
 }
 
+# A vhost written before web/ existed serves the whole project root. Point its
+# DocumentRoot and <Directory> at web/ in place (backup kept), leaving any other
+# local edits alone. Also applied to certbot's -le-ssl.conf copy of the vhost.
+migrate_docroot() {
+  local f="$1" re web
+  [[ -f "$f" ]] || return 0
+  re="$(printf '%s' "${APP_DIR%/}" | sed 's/[][\.*^$()+?{}|/]/\\&/g')"
+  web="$(printf '%s' "$WEB_ROOT" | sed 's/[\&|]/\\&/g')"
+  grep -Eq "^[[:space:]]*DocumentRoot[[:space:]]+\"?${re}/?\"?[[:space:]]*\$" "$f" || return 0
+  $SUDO cp -a "$f" "${f}.bak.$(date +%Y%m%d%H%M%S)"
+  $SUDO sed -E -i \
+    -e "s|^([[:space:]]*DocumentRoot[[:space:]]+)\"?${re}/?\"?[[:space:]]*\$|\\1${web}|" \
+    -e "s|^([[:space:]]*<Directory[[:space:]]+)\"?${re}/?\"?[[:space:]]*>|\\1${web}>|" \
+    "$f"
+  ok "$(basename "$f"): DocumentRoot moved to $WEB_ROOT (backup kept)"
+}
+
 configure_apache() {
   info "Configuring Apache"
   local m
@@ -216,6 +243,9 @@ configure_apache() {
     $SUDO a2enmod -q mpm_prefork "$phpmod" >/dev/null
     ok "$phpmod enabled (new)"
   else ok "$phpmod enabled"; fi
+
+  [[ $FORCE -eq 1 ]] || migrate_docroot "$VHOST_FILE"
+  migrate_docroot "$SSL_VHOST_FILE"
 
   local tmp; tmp="$(mktemp)"; render_vhost >"$tmp"
   if [[ ! -f "$VHOST_FILE" ]]; then
@@ -271,12 +301,41 @@ configure_permissions() {
     else $SUDO usermod -aG "$WEB_GROUP" "$u"; ok "Added $u to group $WEB_GROUP (log out/in to take effect)"; fi
   fi
 
-  if as_web_user test -r "$APP_DIR/index.php" -a -x "$APP_DIR"; then ok "$WEB_USER can read the project"
+  if as_web_user test -r "$WEB_ROOT/index.php" -a -x "$WEB_ROOT" -a -r "$APP_DIR/includes/db.php"; then ok "$WEB_USER can read the project"
   else
     err "$WEB_USER cannot read $APP_DIR (a parent directory is probably not world-traversable,"
     err "e.g. a 750 home dir). Either: sudo chmod o+x on each parent, or move the project to"
     die "/var/www/thingsfinder and re-run with --app-dir /var/www/thingsfinder."
   fi
+}
+
+# Composer dependencies, installed as the project's owner (not root) so later
+# `composer` runs by that user keep working. vendor/ is blocked from the web.
+install_php_dependencies() {
+  info "Installing PHP dependencies (Composer)"
+  [[ -f "$APP_DIR/composer.json" ]] || { warn "No composer.json — skipping"; return 0; }
+  local owner; owner="$(stat -c %U "$APP_DIR")"
+  local run=(composer install --no-dev --no-interaction --no-progress --optimize-autoloader --working-dir="$APP_DIR")
+  if [[ "$owner" == "root" ]]; then
+    $SUDO env COMPOSER_ALLOW_SUPERUSER=1 "${run[@]}" >/tmp/thingsfinder-composer.log 2>&1
+  else
+    $SUDO -u "$owner" "${run[@]}" >/tmp/thingsfinder-composer.log 2>&1
+  fi || { tail -20 /tmp/thingsfinder-composer.log; die "composer install failed (full log: /tmp/thingsfinder-composer.log)"; }
+  ok "vendor/ installed (as $owner)"
+}
+
+# .env holds the app's settings. Created once from .env.example; readable by
+# the web server's group only.
+configure_env() {
+  info "Configuring .env"
+  local env="$APP_DIR/.env"
+  if [[ -f "$env" ]]; then ok ".env exists — left untouched"
+  elif [[ -f "$APP_DIR/.env.example" ]]; then
+    $SUDO cp "$APP_DIR/.env.example" "$env"
+    ok "Created .env from .env.example (edit it to change settings)"
+  else warn "No .env.example — running on defaults"; return 0; fi
+  $SUDO chgrp "$WEB_GROUP" "$env"; $SUDO chmod 0640 "$env"
+  ok ".env readable by group $WEB_GROUP only"
 }
 
 init_database() {
@@ -337,6 +396,13 @@ verify() {
 
   # Services
   if svc_active apache2; then pass "apache2 service is running"; else fail "apache2 service is not running"; fi
+  local vf
+  for vf in "$VHOST_FILE" "$SSL_VHOST_FILE"; do
+    [[ -f "$vf" ]] || continue
+    grep -Eq "^[[:space:]]*DocumentRoot[[:space:]]+\"?${WEB_ROOT}/?\"?[[:space:]]*\$" "$vf" \
+      && pass "$(basename "$vf"): DocumentRoot is $WEB_ROOT" \
+      || fail "$(basename "$vf"): DocumentRoot is not $WEB_ROOT (re-run setup.sh to move it)"
+  done
   $SUDO apache2ctl -S 2>/dev/null | grep -q "namevhost ${DOMAIN} " \
     && pass "VirtualHost for ${DOMAIN} is loaded" || fail "No VirtualHost for ${DOMAIN} in apache2ctl -S"
   $SUDO apache2ctl -M 2>/dev/null | grep -q rewrite_module && pass "mod_rewrite loaded" || fail "mod_rewrite not loaded"
@@ -346,7 +412,7 @@ verify() {
   # so we test the PHP that actually serves the site, not just the CLI.
   detect_php
   local probe=".tf-probe-$RANDOM$RANDOM.php" pout
-  cat <<'PHP' | $SUDO tee "$APP_DIR/$probe" >/dev/null
+  cat <<'PHP' | $SUDO tee "$WEB_ROOT/$probe" >/dev/null
 <?php
 header('Content-Type: text/plain');
 $r = ['version=' . PHP_VERSION, 'sapi=' . PHP_SAPI];
@@ -355,20 +421,21 @@ $r[] = 'freetype=' . (function_exists('imagettftext') ? 1 : 0);
 $r[] = 'shell_exec=' . ((function_exists('shell_exec') && !in_array('shell_exec', array_map('trim', explode(',', (string)ini_get('disable_functions'))), true)) ? 1 : 0);
 $r[] = 'upload_max=' . ini_get('upload_max_filesize');
 try {
-    chdir(__DIR__); require 'includes/db.php';
+    $root = dirname(__DIR__); // the probe sits in web/
+    chdir($root); require 'includes/db.php';
     $db = get_db();
     $need = ['users','shares','places','boxes','items','barcode_items'];
     $have = $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_COLUMN);
     $miss = array_diff($need, $have);
     $ok = !$miss && $db->query('PRAGMA integrity_check')->fetchColumn() === 'ok'
-          && is_writable(__DIR__ . '/data') && is_writable(__DIR__ . '/data/database.sqlite');
+          && is_writable($root . '/data') && is_writable($root . '/data/database.sqlite');
     $r[] = 'db=' . ($ok ? 'ok' : ($miss ? 'missing tables: ' . implode(',', $miss) : 'not writable / integrity'));
 } catch (Throwable $e) { $r[] = 'db=' . $e->getMessage(); }
 echo implode("\n", $r), "\n";
 PHP
   local ps=http pp=80; [[ -n "$SSL_EMAIL" ]] && { ps=https; pp=443; }
   pout="$(curl -s --max-time 10 --resolve "${DOMAIN}:${pp}:127.0.0.1" "${ps}://${DOMAIN}/${probe}")"
-  $SUDO rm -f "$APP_DIR/$probe"
+  $SUDO rm -f "$WEB_ROOT/$probe"
   kv() { sed -n "s/^$1=//p" <<<"$pout"; }
   if [[ -z "$(kv version)" ]]; then
     fail "PHP probe through Apache returned no data (is mod_php executing .php files?)"
@@ -408,11 +475,18 @@ PHP
   expect "Static asset /assets/style.css" "200"          $s /assets/style.css
   expect "Pretty URL routing (/search)"   "200|302|303"  $s "/search?q=test"
   expect "JSON API without session"       "401|403"      $s /api/places
-  expect "Blocked: data/database.sqlite"  "403|404"      $s /data/database.sqlite
-  expect "Blocked: includes/db.php"       "403|404"      $s /includes/db.php
-  expect "Blocked: README.md"             "403|404"      $s /README.md
-  expect "Blocked: .git/config"           "403|404"      $s /.git/config
-  expect "Blocked: router.php"            "403|404"      $s /router.php
+  # These live outside web/, so the app answers instead (a redirect to /login,
+  # or 403/404) — never with the file itself.
+  local hidden="302|303|403|404"
+  expect "Not served: data/database.sqlite" "$hidden"    $s /data/database.sqlite
+  expect "Not served: includes/db.php"      "$hidden"    $s /includes/db.php
+  expect "Not served: api/src/scope.php"    "$hidden"    $s /api/src/scope.php
+  expect "Not served: README.md"            "$hidden"    $s /README.md
+  expect "Not served: .git/config"          "$hidden"    $s /.git/config
+  expect "Not served: router.php"           "$hidden"    $s /router.php
+  expect "Not served: .env"                 "$hidden"    $s /.env
+  expect "Not served: vendor/autoload.php"  "$hidden"    $s /vendor/autoload.php
+  expect "Not served: composer.json"        "$hidden"    $s /composer.json
 
   # Informational
   local pub; pub="$(getent hosts "$DOMAIN" | awk '{print $1}' | head -1)"
@@ -431,6 +505,8 @@ main() {
     check_os
     install_dependencies
     configure_permissions
+    install_php_dependencies
+    configure_env
     init_database
     configure_apache
     configure_local_hosts

@@ -63,5 +63,6 @@ class MigrationTest {
         assertEquals("Bin", room.boxDao().findByToken("abcdefabcdefabcdefabcdefabcdefab")?.name)
         room.close()
         file.delete()
+        Unit
     }
 }

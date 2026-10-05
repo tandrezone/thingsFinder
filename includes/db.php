@@ -4,6 +4,16 @@
  * and makes sure the schema exists.
  */
 
+require_once __DIR__ . '/helpers.php';
+
+/** TF_DB_PATH (absolute, or relative to the project root), default data/database.sqlite. */
+function database_path(): string
+{
+    $path = env('TF_DB_PATH', 'data/database.sqlite');
+    $absolute = preg_match('#^(/|\\\\|[A-Za-z]:)#', $path) === 1; // /srv/..., \\share\..., C:\... or C:/...
+    return $absolute ? $path : project_root() . '/' . $path;
+}
+
 function get_db(): PDO
 {
     static $pdo = null;
@@ -11,11 +21,11 @@ function get_db(): PDO
         return $pdo;
     }
 
-    $dbDir = __DIR__ . '/../data';
+    $dbFile = database_path();
+    $dbDir = dirname($dbFile);
     if (!is_dir($dbDir)) {
         mkdir($dbDir, 0775, true);
     }
-    $dbFile = $dbDir . '/database.sqlite';
 
     $pdo = new PDO('sqlite:' . $dbFile);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);

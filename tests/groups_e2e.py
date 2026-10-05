@@ -3,7 +3,7 @@
 End-to-end test for registration, groups, invites and the add/remove QR
 codes — API and web UI. Standard library only.
 
-    php -S 127.0.0.1:8765 router.php &      # with a fresh data/ dir and one user:
+    php -S 127.0.0.1:8765 -t web router.php &   # with a fresh data/ dir and one user:
     php -r 'require "includes/helpers.php"; require "includes/db.php"; require "includes/auth.php";
             register_user(get_db(), "tiago", "secret123");'
     python3 tests/groups_e2e.py              # BASE=http://... to point elsewhere

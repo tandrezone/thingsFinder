@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.ui.ViewModelTests" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:01.743Z" hostname="TIAGOANDRE-JAVR" time="0.688">
+  <properties/>
+  <testcase name="box screen goes Loading to Content, then emits Deleted" classname="app.thingsfinder.ui.ViewModelTests" time="0.093"/>
+  <testcase name="unknown box is NotFound" classname="app.thingsfinder.ui.ViewModelTests" time="0.052"/>
+  <testcase name="barcode lookup goes Looking to Suggested" classname="app.thingsfinder.ui.ViewModelTests" time="0.055"/>
+  <testcase name="adding an item reports success and shows up in the list" classname="app.thingsfinder.ui.ViewModelTests" time="0.075"/>
+  <testcase name="photo text is merged into one review list without duplicates" classname="app.thingsfinder.ui.ViewModelTests" time="0.053"/>
+  <testcase name="search keeps its query in SavedStateHandle and finds items" classname="app.thingsfinder.ui.ViewModelTests" time="0.307"/>
+  <testcase name="json import goes through review, then adds everything left" classname="app.thingsfinder.ui.ViewModelTests" time="0.053"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -9,7 +9,7 @@
  * The design is a small "tag": a double-line frame, a light accent chip
  * behind each icon, a dashed divider between the QR and the text column,
  * and a decorative corner hole — built from a couple of accent colors that
- * match the app's own palette (includes/../assets/style.css --accent).
+ * match the app's own palette (web/assets/style.css --accent).
  * Everything decorative stays high-contrast enough to still look right on
  * a monochrome thermal printer, where the accent color just prints as
  * solid black/gray.
@@ -21,7 +21,7 @@
  *     font-family, rendered by whatever is printing the SVG.
  *   - PNG: rasterized via GD, for tools that only accept a bitmap image.
  *     Text is drawn with the vendored Liberation Sans TrueType font
- *     (assets/fonts/) when GD's FreeType support is available, so it's
+ *     (web/assets/fonts/) when GD's FreeType support is available, so it's
  *     crisp on any server regardless of what system fonts are installed;
  *     otherwise it falls back to GD's built-in bitmap font so PNG export
  *     still works with zero configuration.
@@ -30,7 +30,7 @@
 require_once __DIR__ . '/qrcode.php';
 require_once __DIR__ . '/helpers.php';
 
-// Same palette as assets/style.css (--text / --accent / --accent-soft), so
+// Same palette as web/assets/style.css (--text / --accent / --accent-soft), so
 // the printed label feels like it belongs to the rest of the app.
 const LABEL_INK = '#2b2620';
 const LABEL_MUTED = '#5b5245';
@@ -48,7 +48,7 @@ function label_find_ttf(bool $bold = false): ?string
     if (!function_exists('imagettftext')) {
         return null;
     }
-    $vendored = __DIR__ . '/../assets/fonts/LiberationSans-' . ($bold ? 'Bold' : 'Regular') . '.ttf';
+    $vendored = __DIR__ . '/../web/assets/fonts/LiberationSans-' . ($bold ? 'Bold' : 'Regular') . '.ttf';
     if (is_file($vendored)) {
         return $vendored;
     }

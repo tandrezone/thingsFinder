@@ -1,0 +1,1060 @@
+openapi: 3.0.3
+info:
+  title: thingsFinder API
+  version: "2.0.0"
+  description: |
+    JSON API of a self-hosted thingsFinder server (`api/index.php`).
+
+    **Authentication.** Every endpoint except `POST /auth/register` and
+    `POST /auth/login` needs either the web app's session cookie or
+    `Authorization: Bearer <token>`. Tokens come from register or login,
+    are valid for 365 days, and are revoked by `POST /auth/logout`.
+
+    **Groups.** Places, boxes and items belong to a group, and everything
+    under `/places`, `/boxes`, `/items` and `/search` is scoped to the
+    *active group*:
+    - token callers pass `?group_id=` (if they're not a member, it's
+      ignored), otherwise their default group is used;
+    - cookie callers use the group picked in the web app.
+
+    A view-only member gets `403` on every create, update or delete. A
+    place, box or item in another group answers `404`.
+
+    **Errors** always look like `{"error": "message"}`.
+
+    **Mounting.** The API (`api/` in the repo) answers under `/api` inside
+    the web app, or at the root of its own host when served standalone —
+    e.g. `GET /api/places` and `GET https://api.example.com/places` are the
+    same call.
+
+    `PUT` routes also accept `PATCH` with the same body.
+  license:
+    name: Self-hosted
+servers:
+  - url: https://thingsfinder.xyz/api
+    description: Default server used by the Android app
+  - url: http://localhost:8000/api
+    description: Local development, inside the web app (`composer serve`)
+  - url: http://localhost:8001
+    description: Local development, standalone API — no /api prefix (`composer serve:api`)
+
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+
+tags:
+  - name: Auth
+    description: Accounts and app tokens
+  - name: Groups
+    description: Groups, invites and members
+  - name: Sync
+    description: Phone ↔ server sync (Android app)
+  - name: Places
+  - name: Boxes
+  - name: Items
+  - name: Search
+  - name: Barcodes
+    description: Barcode → item name register, shared by everyone on the server (not group-scoped)
+
+paths:
+  # ------------------------------------------------------------------ auth
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Create an account
+      description: |
+        Creates the account and its personal group ("*username*'s things"),
+        and returns a token. Usernames are compared case-insensitively.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, pattern: '^[A-Za-z0-9._-]{3,40}$', example: anna }
+                password: { type: string, minLength: 8, format: password }
+                device_name: { type: string, maxLength: 100, default: Android, example: Pixel 8 }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, user, group]
+                properties:
+                  token: { $ref: "#/components/schemas/Token" }
+                  user: { $ref: "#/components/schemas/User" }
+                  group: { $ref: "#/components/schemas/Group" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: Registration is turned off on this server (`TF_REGISTRATION=off`)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: Username taken
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in and get a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+                device_name: { type: string, maxLength: 100, default: Android }
+      responses:
+        "201":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, user]
+                properties:
+                  token: { $ref: "#/components/schemas/Token" }
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Wrong username or password
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the token used for this call
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { logged_out: { type: boolean, example: true } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /me:
+    get:
+      tags: [Auth]
+      summary: The signed-in user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, default_group_id]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  default_group_id: { type: integer, description: Group used when none is named }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # ---------------------------------------------------------------- groups
+  /groups:
+    get:
+      tags: [Groups]
+      summary: Groups you belong to
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups, default_group_id]
+                properties:
+                  groups: { type: array, items: { $ref: "#/components/schemas/Group" } }
+                  default_group_id: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Groups]
+      summary: Create a group (you become its owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80, description: "Whitespace is collapsed and trimmed", example: Family }
+      responses:
+        "201": { $ref: "#/components/responses/GroupOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /groups/join:
+    post:
+      tags: [Groups]
+      summary: Join a group by invite token, or by name + key
+      description: |
+        Send either `token` (from the invite link `/join/<token>` or its QR
+        code) or `name` + `key`. The key is matched ignoring case, spaces and
+        dashes, and the name ignoring case. Joining a group you're already in
+        succeeds and changes nothing. New members get edit permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [token]
+                  properties:
+                    token: { type: string, pattern: '^[a-f0-9]{32}$' }
+                - type: object
+                  required: [name, key]
+                  properties:
+                    name: { type: string, example: Family }
+                    key: { type: string, example: K7F3-9QX2 }
+      responses:
+        "200": { $ref: "#/components/responses/GroupOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No group matches that invite
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    get:
+      tags: [Groups]
+      summary: A group and its members
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [group, members]
+                properties:
+                  group: { $ref: "#/components/schemas/Group" }
+                  members: { type: array, items: { $ref: "#/components/schemas/Member" } }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+    put:
+      tags: [Groups]
+      summary: Rename a group (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80 }
+      responses:
+        "200": { $ref: "#/components/responses/GroupOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/OwnerOnly" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+    delete:
+      tags: [Groups]
+      summary: Delete a group and every place, box and item in it (owner only)
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "403": { $ref: "#/components/responses/OwnerOnly" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+
+  /groups/{groupId}/invite/reset:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    post:
+      tags: [Groups]
+      summary: Make a new invite link and key (owner only); old ones stop working
+      responses:
+        "200": { $ref: "#/components/responses/GroupOk" }
+        "403": { $ref: "#/components/responses/OwnerOnly" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+
+  /groups/{groupId}/leave:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    post:
+      tags: [Groups]
+      summary: Leave a group (owners can't leave; they delete it instead)
+      responses:
+        "200":
+          description: Left
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { left: { type: boolean, example: true } }
+        "400":
+          description: You own this group
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+
+  /groups/{groupId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+      - name: userId
+        in: path
+        required: true
+        schema: { type: integer }
+    put:
+      tags: [Groups]
+      summary: Change a member's permission (owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission]
+              properties:
+                permission: { $ref: "#/components/schemas/Permission" }
+      responses:
+        "200":
+          description: Updated (silently a no-op for the owner or a non-member)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { updated: { type: boolean, example: true } }
+        "400":
+          description: That's you
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403": { $ref: "#/components/responses/OwnerOnly" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+    delete:
+      tags: [Groups]
+      summary: Remove a member (owner only)
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { removed: { type: boolean, example: true } }
+        "400":
+          description: That's you
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403": { $ref: "#/components/responses/OwnerOnly" }
+        "404": { $ref: "#/components/responses/GroupNotFound" }
+
+  # ------------------------------------------------------------------ sync
+  /sync:
+    post:
+      tags: [Sync]
+      summary: Push the phone's changes and pull the server's for one group
+      description: |
+        Rows are identified by `uuid`. Conflicts are settled per row by
+        `updated_at` (epoch ms): the newest edit wins. Deletes are applied
+        first. Boxes need their place, and items their box or place, to
+        exist in the group already (sent earlier, or in the same request).
+
+        `since` is the `server_time` returned by the previous sync (0 for a
+        full pull). The response's `changes` holds everything written on the
+        server after it. Timestamps more than a day in the future are
+        replaced with the server's clock.
+
+        Share tokens that are missing, malformed or already used are replaced
+        with fresh ones. The phone adopts them from `changes`.
+
+        A view-only member's pushes are all returned in `skipped` with reason
+        `read only`, and they still receive everything.
+
+        The barcode register is merged (union, the phone's name wins), and the
+        whole register is always returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncRequest" }
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Not a member of `group_id`
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "413":
+          description: More than 20000 rows in one request
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  # ---------------------------------------------------------------- places
+  /places:
+    get:
+      tags: [Places]
+      summary: Places in the active group
+      parameters: [{ $ref: "#/components/parameters/ActiveGroup" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  places: { type: array, items: { $ref: "#/components/schemas/Place" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Places]
+      summary: Create a place
+      parameters: [{ $ref: "#/components/parameters/ActiveGroup" }]
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "201": { $ref: "#/components/responses/PlaceOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+
+  /places/{placeId}:
+    parameters:
+      - $ref: "#/components/parameters/PlaceId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Places]
+      summary: A place
+      responses:
+        "200": { $ref: "#/components/responses/PlaceOk" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Places]
+      summary: Rename a place
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "200": { $ref: "#/components/responses/PlaceOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Places]
+      summary: Delete a place with all its boxes and items
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /places/{placeId}/boxes:
+    parameters:
+      - $ref: "#/components/parameters/PlaceId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Boxes]
+      summary: Boxes in a place
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  boxes: { type: array, items: { $ref: "#/components/schemas/Box" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Boxes]
+      summary: Create a box in a place
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "201": { $ref: "#/components/responses/BoxOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /places/{placeId}/items:
+    parameters:
+      - $ref: "#/components/parameters/PlaceId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Items]
+      summary: Items loose in a place (not in any box)
+      responses:
+        "200": { $ref: "#/components/responses/ItemList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Items]
+      summary: Add an item loose in a place
+      requestBody: { $ref: "#/components/requestBodies/NewItem" }
+      responses:
+        "201": { $ref: "#/components/responses/ItemOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ----------------------------------------------------------------- boxes
+  /boxes/{boxId}:
+    parameters:
+      - $ref: "#/components/parameters/BoxId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Boxes]
+      summary: A box
+      responses:
+        "200": { $ref: "#/components/responses/BoxOk" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Boxes]
+      summary: Rename a box, and optionally move it (with its items) to another place
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                place_id: { type: integer, description: Another place in the same group }
+      responses:
+        "200": { $ref: "#/components/responses/BoxOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: place_id is not a place in this group
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      tags: [Boxes]
+      summary: Delete a box and its items
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /boxes/{boxId}/contents:
+    parameters:
+      - $ref: "#/components/parameters/BoxId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Boxes]
+      summary: A box with its place and all its items
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  box: { $ref: "#/components/schemas/Box" }
+                  items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /boxes/{boxId}/items:
+    parameters:
+      - $ref: "#/components/parameters/BoxId"
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Items]
+      summary: Items in a box
+      responses:
+        "200": { $ref: "#/components/responses/ItemList" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Items]
+      summary: Add an item to a box
+      requestBody: { $ref: "#/components/requestBodies/NewItem" }
+      responses:
+        "201": { $ref: "#/components/responses/ItemOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ----------------------------------------------------------------- items
+  /items/{itemId}:
+    parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema: { type: integer }
+      - $ref: "#/components/parameters/ActiveGroup"
+    get:
+      tags: [Items]
+      summary: An item
+      responses:
+        "200": { $ref: "#/components/responses/ItemOk" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Items]
+      summary: Edit an item, and optionally move it
+      description: Give `box_id` to move it into a box, or `place_id` to make it loose in a place. If both are given, `box_id` is used.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                quantity: { type: integer, minimum: 1, description: Unchanged if omitted }
+                box_id: { type: integer }
+                place_id: { type: integer }
+      responses:
+        "200": { $ref: "#/components/responses/ItemOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: box_id / place_id is not in this group
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      tags: [Items]
+      summary: Delete an item
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------- search
+  /search:
+    get:
+      tags: [Search]
+      summary: Search item names in the active group
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Substring to look for, case-insensitive. Empty returns no results.
+          schema: { type: string, example: glue }
+        - $ref: "#/components/parameters/ActiveGroup"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: { type: string }
+                  results: { type: array, items: { $ref: "#/components/schemas/SearchResult" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -------------------------------------------------------------- barcodes
+  /barcodes:
+    get:
+      tags: [Barcodes]
+      summary: The whole barcode register
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  barcodes: { type: array, items: { $ref: "#/components/schemas/Barcode" } }
+    post:
+      tags: [Barcodes]
+      summary: Register a barcode, or relabel an existing one
+      description: Needs edit permission in your active group.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Barcode" }
+      responses:
+        "201": { $ref: "#/components/responses/BarcodeOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+
+  /barcodes/{code}:
+    parameters:
+      - $ref: "#/components/parameters/Code"
+    get:
+      tags: [Barcodes]
+      summary: Look up a registered barcode
+      responses:
+        "200": { $ref: "#/components/responses/BarcodeOk" }
+        "404":
+          description: Barcode not registered
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    put:
+      tags: [Barcodes]
+      summary: Rename a registered barcode
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "200": { $ref: "#/components/responses/BarcodeOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+        "404":
+          description: Barcode not registered
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      tags: [Barcodes]
+      summary: Remove a barcode from the register
+      responses:
+        "200": { $ref: "#/components/responses/Deleted" }
+        "403": { $ref: "#/components/responses/ViewOnly" }
+
+  /lookup/{code}:
+    parameters:
+      - $ref: "#/components/parameters/Code"
+    get:
+      tags: [Barcodes]
+      summary: Suggest a product name from Open Food Facts / UPCitemdb
+      description: A best-effort suggestion. It never writes to the register; `name` and `source` are null when nothing is found.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  barcode: { type: string }
+                  name: { type: string, nullable: true }
+                  source: { type: string, nullable: true, example: Open Food Facts }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 64 hex characters from /auth/login or /auth/register
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: The web app's login session
+
+  parameters:
+    ActiveGroup:
+      name: group_id
+      in: query
+      required: false
+      description: Bearer-token callers only — the group to work in. Defaults to your default group (also used if you're not a member of this one).
+      schema: { type: integer }
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema: { type: integer }
+    PlaceId:
+      name: placeId
+      in: path
+      required: true
+      schema: { type: integer }
+    BoxId:
+      name: boxId
+      in: path
+      required: true
+      schema: { type: integer }
+    Code:
+      name: code
+      in: path
+      required: true
+      schema: { type: string, example: "4006381333931" }
+
+  requestBodies:
+    Name:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+    NewItem:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, example: Hot glue gun }
+              quantity: { type: integer, minimum: 1, default: 1 }
+
+  responses:
+    BadRequest:
+      description: Missing or invalid field
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Unauthorized:
+      description: No valid session or token
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ViewOnly:
+      description: You have view-only access to this group
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    OwnerOnly:
+      description: Only the group's owner can do that
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Not found in the active group
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    GroupNotFound:
+      description: No such group, or you're not a member
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Deleted:
+      description: Deleted
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { deleted: { type: boolean, example: true } }
+    GroupOk:
+      description: The group
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { group: { $ref: "#/components/schemas/Group" } }
+    PlaceOk:
+      description: The place
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { place: { $ref: "#/components/schemas/Place" } }
+    BoxOk:
+      description: The box
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { box: { $ref: "#/components/schemas/Box" } }
+    ItemOk:
+      description: The item
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { item: { $ref: "#/components/schemas/Item" } }
+    ItemList:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+    BarcodeOk:
+      description: The barcode entry
+      content:
+        application/json:
+          schema:
+            type: object
+            properties: { barcode: { $ref: "#/components/schemas/Barcode" } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, example: name is required }
+    Token:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: Shown once — only its hash is stored on the server
+    User:
+      type: object
+      required: [id, username]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+    Role:
+      type: string
+      enum: [owner, member]
+    Permission:
+      type: string
+      enum: [edit, view]
+    Invite:
+      type: object
+      required: [url, token, key]
+      properties:
+        url: { type: string, format: uri, example: https://thingsfinder.xyz/join/73a273f7ddf7d39bd14bfa924ff79b2a }
+        token: { type: string, pattern: '^[a-f0-9]{32}$' }
+        key: { type: string, pattern: '^[A-Z2-9]{4}-[A-Z2-9]{4}$', example: K7F3-9QX2 }
+    Group:
+      type: object
+      required: [id, name, role, permission, member_count, invite]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        permission: { $ref: "#/components/schemas/Permission" }
+        member_count: { type: integer }
+        invite:
+          allOf: [{ $ref: "#/components/schemas/Invite" }]
+          nullable: true
+          description: Only shown to members who can edit
+    Member:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        permission: { $ref: "#/components/schemas/Permission" }
+    Place:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        url: { type: string, example: /place/garage, description: Web page path }
+        add_url: { type: string, example: /add/699ecc7536d0ed5943f843ccffa56097, description: "Target of the place's add-item QR code" }
+        remove_url: { type: string, example: /remove/699ecc7536d0ed5943f843ccffa56097, description: "Target of the place's remove-item QR code" }
+    Box:
+      type: object
+      properties:
+        id: { type: integer }
+        place_id: { type: integer }
+        name: { type: string }
+        slug: { type: string }
+        view_url: { type: string, nullable: true, example: /view/6f1eb1a9edadc61ee4288ab43a0c8a37, description: Public read-only page }
+        add_url: { type: string, nullable: true }
+        remove_url: { type: string, nullable: true }
+        url: { type: string, description: "Web page path (only when listed under a place, or in /contents)" }
+        place:
+          type: object
+          description: Only when listed under a place, or in /contents
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            slug: { type: string }
+    Item:
+      type: object
+      description: Exactly one of box_id / place_id is set
+      properties:
+        id: { type: integer }
+        box_id: { type: integer, nullable: true }
+        place_id: { type: integer, nullable: true }
+        name: { type: string }
+        quantity: { type: integer, minimum: 1 }
+    SearchResult:
+      type: object
+      properties:
+        item:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            quantity: { type: integer }
+        box:
+          type: object
+          nullable: true
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            slug: { type: string }
+        place:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            slug: { type: string }
+        url: { type: string, example: /place/garage/tools }
+    Barcode:
+      type: object
+      required: [barcode, name]
+      properties:
+        barcode: { type: string, maxLength: 64 }
+        name: { type: string }
+
+    # ---- sync wire format (also android/.../sync/SyncModels.kt)
+    Uuid:
+      type: string
+      pattern: '^[A-Za-z0-9-]{8,64}$'
+    EpochMs:
+      type: integer
+      format: int64
+      description: Milliseconds since the Unix epoch
+    ShareToken:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{8,128}$'
+    SyncPlace:
+      type: object
+      required: [uuid, name, updated_at]
+      properties:
+        uuid: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string, maxLength: 200 }
+        share_token: { $ref: "#/components/schemas/ShareToken" }
+        updated_at: { $ref: "#/components/schemas/EpochMs" }
+    SyncBox:
+      type: object
+      required: [uuid, place_uuid, name, updated_at]
+      properties:
+        uuid: { $ref: "#/components/schemas/Uuid" }
+        place_uuid: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string, maxLength: 200 }
+        share_token: { $ref: "#/components/schemas/ShareToken" }
+        updated_at: { $ref: "#/components/schemas/EpochMs" }
+    SyncItem:
+      type: object
+      description: Exactly one of box_uuid / place_uuid
+      required: [uuid, name, updated_at]
+      properties:
+        uuid: { $ref: "#/components/schemas/Uuid" }
+        box_uuid: { allOf: [{ $ref: "#/components/schemas/Uuid" }], nullable: true }
+        place_uuid: { allOf: [{ $ref: "#/components/schemas/Uuid" }], nullable: true }
+        name: { type: string, maxLength: 200 }
+        quantity: { type: integer, minimum: 1, maximum: 100000, default: 1 }
+        updated_at: { $ref: "#/components/schemas/EpochMs" }
+    SyncDeleted:
+      type: object
+      required: [kind, uuid, deleted_at]
+      properties:
+        kind: { type: string, enum: [places, boxes, items] }
+        uuid: { $ref: "#/components/schemas/Uuid" }
+        deleted_at: { $ref: "#/components/schemas/EpochMs" }
+    SyncBarcode:
+      type: object
+      required: [barcode, name]
+      properties:
+        barcode: { type: string, maxLength: 64 }
+        name: { type: string }
+    SyncRequest:
+      type: object
+      required: [since]
+      properties:
+        group_id: { type: integer, description: Group to sync; defaults to your default group }
+        since: { allOf: [{ $ref: "#/components/schemas/EpochMs" }], description: "server_time of the previous sync, 0 for everything" }
+        places: { type: array, items: { $ref: "#/components/schemas/SyncPlace" } }
+        boxes: { type: array, items: { $ref: "#/components/schemas/SyncBox" } }
+        items: { type: array, items: { $ref: "#/components/schemas/SyncItem" } }
+        deleted: { type: array, items: { $ref: "#/components/schemas/SyncDeleted" } }
+        barcodes: { type: array, items: { $ref: "#/components/schemas/SyncBarcode" } }
+    SyncChanges:
+      type: object
+      properties:
+        places: { type: array, items: { $ref: "#/components/schemas/SyncPlace" } }
+        boxes: { type: array, items: { $ref: "#/components/schemas/SyncBox" } }
+        items: { type: array, items: { $ref: "#/components/schemas/SyncItem" } }
+        deleted:
+          type: array
+          description: Tombstones from every group (they carry no names); ignore uuids you don't have
+          items: { $ref: "#/components/schemas/SyncDeleted" }
+        barcodes: { type: array, items: { $ref: "#/components/schemas/SyncBarcode" } }
+    SyncSkipped:
+      type: object
+      properties:
+        kind: { type: string, enum: [places, boxes, items] }
+        uuid: { $ref: "#/components/schemas/Uuid" }
+        reason:
+          type: string
+          enum: [uuid in use, place not found, parent not found, read only]
+          description: "`uuid in use` and `read only` are permanent; resend the others later"
+    SyncResponse:
+      type: object
+      required: [server_time, group, changes, skipped]
+      properties:
+        server_time: { allOf: [{ $ref: "#/components/schemas/EpochMs" }], description: Send as `since` next time }
+        group:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            permission: { $ref: "#/components/schemas/Permission" }
+            role: { $ref: "#/components/schemas/Role" }
+        changes: { $ref: "#/components/schemas/SyncChanges" }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SyncSkipped" } }

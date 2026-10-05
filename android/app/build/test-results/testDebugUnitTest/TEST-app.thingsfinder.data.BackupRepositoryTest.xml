@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.data.BackupRepositoryTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:24:58.792Z" hostname="TIAGOANDRE-JAVR" time="0.348">
+  <properties/>
+  <testcase name="export then restore into an empty phone reproduces everything" classname="app.thingsfinder.data.BackupRepositoryTest" time="0.237"/>
+  <testcase name="older backups without place tokens get fresh ones" classname="app.thingsfinder.data.BackupRepositoryTest" time="0.071"/>
+  <testcase name="a random json file is rejected before anything is touched" classname="app.thingsfinder.data.BackupRepositoryTest" time="0.04"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -20,7 +20,11 @@
  * default group).
  */
 
-const API_TOKEN_TTL_DAYS = 365;
+/** How long an app token stays valid: TF_TOKEN_TTL_DAYS, default 365. */
+function api_token_ttl_days(): int
+{
+    return max(1, (int)env('TF_TOKEN_TTL_DAYS', '365'));
+}
 const SYNC_MAX_ROWS = 20000;
 const SYNC_NOW_MS_SQL = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER)";
 
@@ -108,7 +112,7 @@ function create_api_token(PDO $pdo, int $userId, string $deviceName): string
     $pdo->prepare(
         "INSERT INTO api_tokens (user_id, token_hash, device_name, expires_at)
          VALUES (?, ?, ?, datetime('now', ?))"
-    )->execute([$userId, hash('sha256', $token), mb_substr($deviceName, 0, 100), '+' . API_TOKEN_TTL_DAYS . ' days']);
+    )->execute([$userId, hash('sha256', $token), mb_substr($deviceName, 0, 100), '+' . api_token_ttl_days() . ' days']);
     return $token;
 }
 
@@ -136,7 +140,7 @@ function delete_api_token(PDO $pdo, string $token): void
     $pdo->prepare('DELETE FROM api_tokens WHERE token_hash = ?')->execute([hash('sha256', $token)]);
 }
 
-/** The bearer token sent with this request, if any (Apache may hide Authorization — see .htaccess). */
+/** The bearer token sent with this request, if any (Apache may hide Authorization — see web/.htaccess). */
 function request_bearer_token(): ?string
 {
     $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';

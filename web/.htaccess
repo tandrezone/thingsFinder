@@ -1,0 +1,28 @@
+# Apache rules for the web root (point the vhost's DocumentRoot here, at web/).
+# With PHP's built-in server, ../router.php handles routing instead — this file
+# is unused there.
+#
+# Everything private (.env, vendor/, data/, includes/, api/, tests, the Android
+# project) lives one level up, outside the web root, so it can't be requested.
+
+RewriteEngine On
+
+# Pass `Authorization: Bearer …` (the Android app's token) through to PHP;
+# some Apache/PHP setups drop it otherwise.
+SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# No dotfiles (.htaccess, stray editor/OS files) except /.well-known/ (ACME).
+RewriteRule (^|/)\.(?!well-known(/|$)) - [F,L]
+
+# Serve real files/directories as-is (css, js, etc).
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# /api and /api/* go to the JSON API (api.php -> ../api/index.php).
+RewriteRule ^api(/.*)?$ api.php [L]
+
+# Everything else goes to the UI front controller.
+RewriteRule ^ index.php [L]

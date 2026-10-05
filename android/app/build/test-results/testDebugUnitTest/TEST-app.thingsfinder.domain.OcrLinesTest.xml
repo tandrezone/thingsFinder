@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="app.thingsfinder.domain.OcrLinesTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.153Z" hostname="TIAGOANDRE-JAVR" time="0.002">
+  <properties/>
+  <testcase name="cleans, filters and dedupes lines" classname="app.thingsfinder.domain.OcrLinesTest" time="0.001"/>
+  <testcase name="merge skips names already under review" classname="app.thingsfinder.domain.OcrLinesTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,5 +1,60 @@
 <?php
-/** Small shared helpers used by both the UI (index.php) and the API (api.php). */
+/** Small shared helpers used by both the UI (web/index.php) and the API (api/). */
+
+// -------------------------------------------------------------------------
+// Configuration: real environment variables, or a .env file in the project
+// root (read with vlucas/phpdotenv once `composer install` has been run).
+// Real environment variables always win over .env. See .env.example.
+// -------------------------------------------------------------------------
+
+function project_root(): string
+{
+    return dirname(__DIR__);
+}
+
+/** Loads .env once per request. Without vendor/ (no `composer install`) only real env vars are seen. */
+function load_env(): void
+{
+    static $loaded = false;
+    if ($loaded) {
+        return;
+    }
+    $loaded = true;
+    $autoload = project_root() . '/vendor/autoload.php';
+    if (is_file($autoload)) {
+        require_once $autoload;
+        Dotenv\Dotenv::createImmutable(project_root())->safeLoad();
+    } elseif (is_file(project_root() . '/.env')) {
+        error_log('thingsFinder: .env is ignored until `composer install` has been run');
+    }
+}
+
+/** A setting as a string, or $default when it's unset or empty. */
+function env(string $key, ?string $default = null): ?string
+{
+    load_env();
+    // getenv() first: it sees the real environment (and Apache SetEnv) on every
+    // SAPI, while phpdotenv only fills $_ENV/$_SERVER — and, not seeing real
+    // variables in those under e.g. `php -S`, would otherwise let .env win.
+    $value = getenv($key);
+    if ($value === false) {
+        $value = $_ENV[$key] ?? $_SERVER[$key] ?? false;
+    }
+    return ($value === false || $value === null || $value === '') ? $default : (string)$value;
+}
+
+/** A yes/no setting: on/off, true/false, yes/no, 1/0 (anything else means $default). */
+function env_bool(string $key, bool $default): bool
+{
+    $value = strtolower((string)env($key, ''));
+    if (in_array($value, ['1', 'true', 'on', 'yes'], true)) {
+        return true;
+    }
+    if (in_array($value, ['0', 'false', 'off', 'no'], true)) {
+        return false;
+    }
+    return $default;
+}
 
 /**
  * Limits for JSON item import — referenced by the schema, the prompt and the
@@ -105,9 +160,17 @@ function favicon_tags(): string
         . '<meta name="theme-color" content="#b5652b">' . "\n";
 }
 
-/** Absolute base URL of the running app, e.g. "http://localhost:8000". */
+/**
+ * Absolute base URL of the web app, e.g. "http://localhost:8000" — used in
+ * invite links and QR codes. TF_APP_URL overrides it: needed when the API
+ * runs on its own host, or behind a proxy that hides the real host/scheme.
+ */
 function base_url(): string
 {
+    $configured = env('TF_APP_URL');
+    if ($configured !== null) {
+        return rtrim($configured, '/');
+    }
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
     $scheme = $https ? 'https' : 'http';
@@ -213,11 +276,14 @@ function pending_name_take(): string
 }
 
 /**
- * Set to false to disable external barcode lookups entirely — thingsFinder
- * will then only ever know a barcode if you or a scan taught it one
- * directly, and will never make an outbound network call.
+ * TF_BARCODE_LOOKUP=off disables external barcode lookups entirely —
+ * thingsFinder will then only ever know a barcode if you or a scan taught
+ * it one directly, and will never make an outbound network call.
  */
-const EXTERNAL_BARCODE_LOOKUP_ENABLED = true;
+function external_barcode_lookup_enabled(): bool
+{
+    return env_bool('TF_BARCODE_LOOKUP', true);
+}
 
 /**
  * Minimal HTTP GET returning decoded JSON, or null on absolutely any
@@ -281,7 +347,7 @@ function http_get_json(string $url, array $headers = [], float $timeout = 3.0): 
  */
 function external_barcode_lookup(string $barcode): ?array
 {
-    if (!EXTERNAL_BARCODE_LOOKUP_ENABLED) {
+    if (!external_barcode_lookup_enabled()) {
         return null;
     }
     $ua = ['User-Agent: thingsFinder/1.0 (self-hosted inventory app)'];

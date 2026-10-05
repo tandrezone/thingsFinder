@@ -86,7 +86,9 @@ class GroupsViewModel(
     }
 
     /** The group this phone shows: the stored one, or — before the first sync — the server's default. */
-    fun activeId(): Long? = cloud.value.activeGroup?.id ?: (groups.value as? UiState.Content)?.data?.defaultGroupId
+    // Read from the session, not [cloud]: that StateFlow is only current while the screen collects it.
+    private suspend fun activeId(): Long? =
+        session.current().activeGroup?.id ?: (groups.value as? UiState.Content)?.data?.defaultGroupId
 
     fun refresh() {
         viewModelScope.launch { load() }

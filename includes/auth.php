@@ -171,11 +171,10 @@ function set_active_group(PDO $pdo, int $groupId): bool
 
 const USERNAME_TAKEN = 'That username is taken.';
 
-/** Open sign-up is on unless the server sets TF_REGISTRATION=off (env var). */
+/** Open sign-up is on unless TF_REGISTRATION=off (environment or .env). */
 function registration_enabled(): bool
 {
-    $setting = strtolower((string)getenv('TF_REGISTRATION'));
-    return !in_array($setting, ['off', '0', 'false', 'no'], true);
+    return env_bool('TF_REGISTRATION', true);
 }
 
 /** Why a new username/password isn't acceptable, or null if it is. */
