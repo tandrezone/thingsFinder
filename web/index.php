@@ -163,6 +163,43 @@ function action_qr_url(string $action, string $token): string
     return base_url() . '/' . $action . '/' . $token;
 }
 
+/**
+ * The Android app's own link for a QR landing path (/view/{token},
+ * /add/{token}, /remove/{token}, /join/{token}): thingsfinder://box|place/
+ * {token}[/add|/remove] or thingsfinder://join/{token}. Null for anything
+ * else. QR codes always point at these web pages so any camera can open
+ * them; the page then offers this link to open the app instead.
+ */
+function app_link_for_path(PDO $pdo, string $path): ?string
+{
+    $parts = explode('/', trim(strtok($path, '?#') ?: '', '/'));
+    if (count($parts) !== 2 || !preg_match('/^[A-Za-z0-9_-]{8,128}$/', $parts[1])) {
+        return null;
+    }
+    [$verb, $token] = $parts;
+    if ($verb === 'join') {
+        return 'thingsfinder://join/' . $token;
+    }
+    if ($verb === 'view') {
+        return 'thingsfinder://box/' . $token;
+    }
+    if ($verb === 'add' || $verb === 'remove') {
+        $kind = find_box_by_token($pdo, $token) ? 'box' : (find_place_by_token($pdo, $token) ? 'place' : null);
+        return $kind ? 'thingsfinder://' . $kind . '/' . $token . '/' . $verb : null;
+    }
+    return null;
+}
+
+/** The "Open in the app" note on a page reached from a QR code; '' without a link. Only shown on touch screens (style.css). */
+function render_app_note(?string $appLink): string
+{
+    if ($appLink === null) {
+        return '';
+    }
+    return '<p class="flash flash-info app-note">' . icon('external', 16)
+        . '<span>Have the thingsFinder app? <a href="' . h($appLink) . '"><strong>Open this in the app</strong></a></span></p>';
+}
+
 /** 'add' or 'remove' while a box/place page was opened from one of its QR codes (?mode=, or carried through a POST); '' otherwise. */
 function item_mode(): string
 {
@@ -726,6 +763,7 @@ if (count($segments) === 2 && $segments[0] === 'view') {
 
     ob_start();
     ?>
+    <?= render_app_note('thingsfinder://box/' . $box['share_token']) ?>
     <h1><?= h($box['name']) ?></h1>
     <p class="meta">In <?= h($place['name'] ?? 'a place') ?> · read-only</p>
     <?php if (!$items): ?>
@@ -824,6 +862,7 @@ if ($segments === ['login']) {
     ob_start();
     ?>
     <div class="auth-card">
+      <?= render_app_note(app_link_for_path($pdo, $next)) ?>
       <h1>Log in</h1>
       <?php if ($error): ?><p class="flash flash-error"><?= icon('alert', 16) ?><span><?= h($error) ?></span></p><?php endif; ?>
       <form method="post" class="stack-form-v">
@@ -877,6 +916,7 @@ if ($segments === ['register']) {
     ob_start();
     ?>
     <div class="auth-card">
+      <?= render_app_note(app_link_for_path($pdo, $next)) ?>
       <h1>Create an account</h1>
       <p class="page-subtitle">You'll get your own group for your stuff, and can join other people's groups with an invite.</p>
       <?php if ($error): ?><p class="flash flash-error"><?= icon('alert', 16) ?><span><?= h($error) ?></span></p><?php endif; ?>
@@ -978,6 +1018,7 @@ if (count($segments) === 2 && $segments[0] === 'join') {
     ob_start();
     ?>
     <div class="auth-card">
+      <?= render_app_note('thingsfinder://join/' . $segments[1]) ?>
       <h1>Join "<?= h($invited['name']) ?>"?</h1>
       <p class="page-subtitle">You've been invited to a group with <?= $memberCount ?> member<?= $memberCount === 1 ? '' : 's' ?>. Everyone in it can see, add, edit and remove its places, boxes and items.</p>
       <form method="post" class="stack-form-v">
@@ -1626,6 +1667,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
 
         ob_start();
         ?>
+        <?php if ($mode !== ''): ?><?= render_app_note('thingsfinder://box/' . $box['share_token'] . '/' . $mode) ?><?php endif; ?>
         <div class="card-head">
           <div class="card-body">
             <h1><?= h($box['name']) ?></h1>
@@ -1781,6 +1823,7 @@ if (count($segments) >= 2 && $segments[0] === 'place') {
 
     ob_start();
     ?>
+    <?php if ($mode !== ''): ?><?= render_app_note('thingsfinder://place/' . $place['share_token'] . '/' . $mode) ?><?php endif; ?>
     <div class="card-head">
       <h1><?= h($place['name']) ?></h1>
       <?php if ($canEdit): ?>

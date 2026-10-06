@@ -47,7 +47,7 @@ Android only:
 - On-device OCR with ML Kit
 - Google code scanner for barcodes and box QR codes (no camera permission needed)
 - Backup and restore to a JSON file, or export the whole SQLite database to move to a new phone
-- Box labels as PNG (50 × 30 mm at 300 dpi), linking to `thingsfinder://box/<token>`
+- Box labels as PNG (50 × 30 mm at 300 dpi), linking to `https://<server>/view/<token>`
 - Syncs one group at a time; switch groups in Settings → Groups
 
 ## Project layout
@@ -127,10 +127,10 @@ always works.
 
 Both versions use the same slugs, box/place tokens and item structure, so
 data round-trips between them. QR codes printed from the web app encode
-`https://<server>/view/<token>`, `/add/<token>` and `/remove/<token>`; codes
-made on the phone encode `thingsfinder://box/<token>[/add|/remove]` and
-`thingsfinder://place/<token>/add|remove`. The Android scanner understands
-both kinds, and finds the box or place as long as the phone has synced (or
+`https://<server>/view/<token>`, `/add/<token>` and `/remove/<token>`, and so
+do codes made on the phone (using the server it syncs with). On a phone those
+pages show an "Open this in the app" link (`thingsfinder://box|place/<token>…`).
+The Android scanner understands both kinds of link, and finds the box or place as long as the phone has synced (or
 restored) data carrying the same token. Invite links are
 `https://<server>/join/<token>`.
 

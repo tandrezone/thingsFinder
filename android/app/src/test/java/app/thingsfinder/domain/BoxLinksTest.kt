@@ -53,6 +53,14 @@ class BoxLinksTest {
         assertEquals(box(), BoxLinks.parse("https://my.host/tf/view/$token"))
     }
 
+    @Test fun `QR codes link to the server's web pages, and parse back`() {
+        assertEquals("https://thingsfinder.xyz/view/$token", BoxLinks.webViewLink("https://thingsfinder.xyz", token))
+        assertEquals("https://my.host/tf/add/$token", BoxLinks.webActionLink("https://my.host/tf/", token, LinkAction.Add))
+        assertEquals("https://my.host/remove/$token", BoxLinks.webActionLink("https://my.host", token, LinkAction.Remove))
+        assertEquals(token, BoxLinks.tokenFrom(BoxLinks.webViewLink("https://my.host", token)))
+        assertEquals(either(LinkAction.Add), BoxLinks.parse(BoxLinks.webActionLink("https://my.host", token, LinkAction.Add)))
+    }
+
     @Test fun `group invites, app and web`() {
         assertEquals(AppLink.JoinGroup("inviteTok_123"), BoxLinks.parse("thingsfinder://join/inviteTok_123"))
         assertEquals(AppLink.JoinGroup("inviteTok_123"), BoxLinks.parse("https://thingsfinder.xyz/join/inviteTok_123"))

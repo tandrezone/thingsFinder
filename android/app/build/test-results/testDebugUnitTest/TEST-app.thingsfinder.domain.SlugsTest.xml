@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.thingsfinder.domain.SlugsTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.160Z" hostname="TIAGOANDRE-JAVR" time="0.005">
+<testsuite name="app.thingsfinder.domain.SlugsTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-06T11:00:27.952Z" hostname="TIAGOANDRE-JAVR" time="0.038">
   <properties/>
   <testcase name="slugify matches the PHP rules" classname="app.thingsfinder.domain.SlugsTest" time="0.001"/>
-  <testcase name="unique appends -2, -3 until free" classname="app.thingsfinder.domain.SlugsTest" time="0.004"/>
+  <testcase name="unique appends -2, -3 until free" classname="app.thingsfinder.domain.SlugsTest" time="0.037"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

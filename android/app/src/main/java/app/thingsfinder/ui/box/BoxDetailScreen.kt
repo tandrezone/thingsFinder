@@ -64,10 +64,12 @@ import app.thingsfinder.domain.Slugs
 import app.thingsfinder.platform.LabelRenderer
 import app.thingsfinder.platform.QrCodes
 import app.thingsfinder.platform.Sharing
+import app.thingsfinder.sync.ServerUrl
 import app.thingsfinder.ui.common.ReviewState
 import app.thingsfinder.ui.common.ScreenEvent
 import app.thingsfinder.ui.common.UiState
 import app.thingsfinder.ui.common.containerFactory
+import app.thingsfinder.ui.common.rememberServerUrl
 import app.thingsfinder.ui.common.text
 import app.thingsfinder.ui.components.ActionQrCard
 import app.thingsfinder.ui.components.ApplyInitialAction
@@ -114,6 +116,7 @@ fun BoxDetailScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val itemsUi = rememberItemsUiState()
+    val serverUrl = rememberServerUrl()
     var dialog by remember { mutableStateOf<BoxDialog?>(null) }
     ApplyInitialAction(initialAction, itemsUi)
 
@@ -131,6 +134,7 @@ fun BoxDetailScreen(
         ocrRunning = ocrRunning,
         itemsUi = itemsUi,
         snackbar = snackbar,
+        serverUrl = serverUrl,
         onBack = onBack,
         onOpenPlace = onOpenPlace,
         onAddItem = { itemsUi.addOpen = true },
@@ -138,13 +142,13 @@ fun BoxDetailScreen(
         onDialog = { dialog = it },
         onShareLabel = { b ->
             scope.launch {
-                val bmp = withContext(Dispatchers.Default) { LabelRenderer.render(BoxLinks.deepLink(b.shareToken), b.name, b.placeName) }
+                val bmp = withContext(Dispatchers.Default) { LabelRenderer.render(BoxLinks.webViewLink(serverUrl, b.shareToken), b.name, b.placeName) }
                 Sharing.sharePng(context, bmp, "label-${Slugs.slugify(b.name)}.png", shareLabelTitle)
             }
         },
         onShareQr = { b ->
             scope.launch {
-                val bmp = withContext(Dispatchers.Default) { QrCodes.bitmap(BoxLinks.deepLink(b.shareToken), 1024, margin = 2) }
+                val bmp = withContext(Dispatchers.Default) { QrCodes.bitmap(BoxLinks.webViewLink(serverUrl, b.shareToken), 1024, margin = 2) }
                 Sharing.sharePng(context, bmp, "qr-${Slugs.slugify(b.name)}.png", shareQrTitle)
             }
         },
@@ -188,6 +192,7 @@ private fun BoxDetailContent(
     ocrRunning: Boolean,
     itemsUi: ItemsUiState,
     snackbar: SnackbarHostState,
+    serverUrl: String = ServerUrl.DEFAULT,
     onBack: () -> Unit,
     onOpenPlace: (Long) -> Unit,
     onAddItem: () -> Unit,
@@ -249,13 +254,13 @@ private fun BoxDetailContent(
                     }
                     // Remove mode is about the items: keep them at the top.
                     if (!itemsUi.removeMode) {
-                        item(key = "qr") { QrCard(state.data, onShareLabel = { onShareLabel(state.data) }, onShareQr = { onShareQr(state.data) }) }
+                        item(key = "qr") { QrCard(state.data, serverUrl, onShareLabel = { onShareLabel(state.data) }, onShareQr = { onShareQr(state.data) }) }
                         item(key = "qr-actions") {
                             ActionQrCard(
                                 name = state.data.name,
                                 isPlace = false,
-                                addLink = BoxLinks.boxLink(state.data.shareToken, LinkAction.Add),
-                                removeLink = BoxLinks.boxLink(state.data.shareToken, LinkAction.Remove),
+                                addLink = BoxLinks.webActionLink(serverUrl, state.data.shareToken, LinkAction.Add),
+                                removeLink = BoxLinks.webActionLink(serverUrl, state.data.shareToken, LinkAction.Remove),
                             )
                         }
                     }
@@ -269,8 +274,9 @@ private fun BoxDetailContent(
 
 /** PHP: the `.qr-block` and "Printable label" blocks on the box page. */
 @Composable
-private fun QrCard(box: BoxWithPlace, onShareLabel: () -> Unit, onShareQr: () -> Unit) {
-    val qr: Bitmap = remember(box.shareToken) { QrCodes.bitmap(BoxLinks.deepLink(box.shareToken), 360) }
+private fun QrCard(box: BoxWithPlace, serverUrl: String, onShareLabel: () -> Unit, onShareQr: () -> Unit) {
+    val link = BoxLinks.webViewLink(serverUrl, box.shareToken)
+    val qr: Bitmap = remember(link) { QrCodes.bitmap(link, 360) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),

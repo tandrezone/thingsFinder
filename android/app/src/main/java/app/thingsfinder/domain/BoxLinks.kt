@@ -30,7 +30,15 @@ sealed interface AppLink {
 /**
  * Boxes and places are identified in QR codes and links by their random
  * share token (PHP: boxes.share_token / places.share_token,
- * new_share_token()). The phone's own codes use the app scheme:
+ * new_share_token()). QR codes — the phone's and the web app's — link to
+ * the server's web pages, so any camera can open them:
+ *
+ *   https://host/view/{token}             a box (public read-only page)
+ *   https://host/add/{token}              a box or place, ready to add an item
+ *   https://host/remove/{token}           a box or place, ready to take one out
+ *   https://host/join/{token}             group invite
+ *
+ * Those pages offer to "open in the app", which uses the app scheme:
  *
  *   thingsfinder://box/{token}            open the box
  *   thingsfinder://box/{token}/add        open it with the add-item sheet up
@@ -38,9 +46,7 @@ sealed interface AppLink {
  *   thingsfinder://place/{token}[/add|/remove]
  *   thingsfinder://join/{token}           group invite
  *
- * Codes printed by the web app use http(s)://host/view/{token} (a box),
- * /add/{token} and /remove/{token} (a box or a place) and /join/{token}
- * (an invite) — all understood here.
+ * Both forms are understood here.
  */
 object BoxLinks {
     const val SCHEME = "thingsfinder"
@@ -68,6 +74,15 @@ object BoxLinks {
         "$SCHEME://$PLACE_HOST/$token" + action.segment.orEmpty().let { if (it.isEmpty()) "" else "/$it" }
 
     fun joinLink(token: String): String = "$SCHEME://$JOIN_HOST/$token"
+
+    /** What a box's own QR code encodes: its public page on [baseUrl] (PHP: base_url() . '/view/' . share_token). */
+    fun webViewLink(baseUrl: String, token: String): String = "${baseUrl.trimEnd('/')}/view/$token"
+
+    /** What a box's or place's add-item / remove-item QR code encodes (PHP: action_qr_url()). */
+    fun webActionLink(baseUrl: String, token: String, action: LinkAction): String {
+        val segment = requireNotNull(action.segment) { "Open has no web action link — use webViewLink" }
+        return "${baseUrl.trimEnd('/')}/$segment/$token"
+    }
 
     /** Parses scanned QR content or an opened link; null if it isn't a thingsFinder link. */
     fun parse(scanned: String): AppLink? {

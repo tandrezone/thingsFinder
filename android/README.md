@@ -74,7 +74,10 @@ opens Groups and offers to join.
 ## QR codes and links
 
 Boxes and places each have a random share token (places since DB v3). The
-phone's codes:
+phone's QR codes encode the cloud server's web pages (`https://host/view/{token}`,
+`/add/{token}`, `/remove/{token}`, `/join/{token}` — the default server unless
+another is set), which any camera can open; on a phone those pages offer an
+"Open this in the app" link using the app's own scheme:
 
 | Link | Opens |
 |---|---|
@@ -83,9 +86,9 @@ phone's codes:
 | `thingsfinder://box/{token}/remove`, `thingsfinder://place/{token}/remove` | the box / place in remove mode (−1 or delete per item) |
 | `thingsfinder://join/{token}` | Groups, offering to join |
 
-The in-app scanner also understands the web app's `https://host/view/{token}`
-(box), `/add/{token}` and `/remove/{token}` (box or place — boxes are looked
-up first) and `/join/{token}`. Parsing lives in `domain/BoxLinks.kt`. Box and
+The in-app scanner understands both: `https://host/view/{token}` (box),
+`/add/{token}` and `/remove/{token}` (box or place — boxes are looked up
+first) and `/join/{token}`, and the `thingsfinder://` links. Parsing lives in `domain/BoxLinks.kt`. Box and
 place screens show *Add item* / *Remove item* codes, each shareable as a bare
 QR or a printable label.
 

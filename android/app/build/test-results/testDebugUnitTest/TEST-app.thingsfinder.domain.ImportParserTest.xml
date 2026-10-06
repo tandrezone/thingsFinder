@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.thingsfinder.domain.ImportParserTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.121Z" hostname="TIAGOANDRE-JAVR" time="0.029">
+<testsuite name="app.thingsfinder.domain.ImportParserTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-06T11:00:27.895Z" hostname="TIAGOANDRE-JAVR" time="0.047">
   <properties/>
-  <testcase name="long names are cut to 200 code points" classname="app.thingsfinder.domain.ImportParserTest" time="0.014"/>
-  <testcase name="quantity coercion follows PHP" classname="app.thingsfinder.domain.ImportParserTest" time="0.005"/>
-  <testcase name="not json, wrong shape and too many" classname="app.thingsfinder.domain.ImportParserTest" time="0.009"/>
-  <testcase name="object wrapper, code fences and BOM are accepted" classname="app.thingsfinder.domain.ImportParserTest" time="0.0"/>
+  <testcase name="long names are cut to 200 code points" classname="app.thingsfinder.domain.ImportParserTest" time="0.027"/>
+  <testcase name="quantity coercion follows PHP" classname="app.thingsfinder.domain.ImportParserTest" time="0.007"/>
+  <testcase name="not json, wrong shape and too many" classname="app.thingsfinder.domain.ImportParserTest" time="0.011"/>
+  <testcase name="object wrapper, code fences and BOM are accepted" classname="app.thingsfinder.domain.ImportParserTest" time="0.001"/>
   <testcase name="bad entries are skipped with a note" classname="app.thingsfinder.domain.ImportParserTest" time="0.0"/>
   <testcase name="bare array with defaults" classname="app.thingsfinder.domain.ImportParserTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>

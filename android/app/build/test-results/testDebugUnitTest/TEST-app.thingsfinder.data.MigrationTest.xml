@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.thingsfinder.data.MigrationTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:24:59.934Z" hostname="TIAGOANDRE-JAVR" time="0.17">
+<testsuite name="app.thingsfinder.data.MigrationTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-06T11:00:27.703Z" hostname="TIAGOANDRE-JAVR" time="0.173">
   <properties/>
-  <testcase name="v2 to v3 gives every existing place its own share token" classname="app.thingsfinder.data.MigrationTest" time="0.17"/>
+  <testcase name="v2 to v3 gives every existing place its own share token" classname="app.thingsfinder.data.MigrationTest" time="0.173"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

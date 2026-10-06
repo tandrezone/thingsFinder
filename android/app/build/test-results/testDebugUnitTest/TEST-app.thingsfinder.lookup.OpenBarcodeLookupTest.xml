@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.thingsfinder.lookup.OpenBarcodeLookupTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.168Z" hostname="TIAGOANDRE-JAVR" time="0.555">
+<testsuite name="app.thingsfinder.lookup.OpenBarcodeLookupTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-10-06T11:00:27.997Z" hostname="TIAGOANDRE-JAVR" time="0.705">
   <properties/>
-  <testcase name="timeouts mean no suggestion, never an exception" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.496"/>
-  <testcase name="blank barcode makes no request" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.012"/>
-  <testcase name="open food facts hit, brand is prefixed when missing from the name" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.013"/>
-  <testcase name="malformed json means no suggestion" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.014"/>
-  <testcase name="falls back to UPCitemdb when open food facts has nothing" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.01"/>
-  <testcase name="server errors mean no suggestion" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.009"/>
+  <testcase name="timeouts mean no suggestion, never an exception" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.63"/>
+  <testcase name="blank barcode makes no request" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.016"/>
+  <testcase name="open food facts hit, brand is prefixed when missing from the name" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.026"/>
+  <testcase name="malformed json means no suggestion" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.011"/>
+  <testcase name="falls back to UPCitemdb when open food facts has nothing" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.011"/>
+  <testcase name="server errors mean no suggestion" classname="app.thingsfinder.lookup.OpenBarcodeLookupTest" time="0.011"/>
   <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[Oct 02, 2026 1:25:00 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
-WARNING: MockWebServer[49863] connection from /127.0.0.1 didn't make a request
-Oct 02, 2026 1:25:00 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
-WARNING: MockWebServer[49863] connection from /127.0.0.1 didn't make a request
+  <system-err><![CDATA[Oct 06, 2026 12:00:28 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[63916] connection from /127.0.0.1 didn't make a request
+Oct 06, 2026 12:00:28 PM okhttp3.mockwebserver.MockWebServer$SocketHandler handle
+WARNING: MockWebServer[63916] connection from /127.0.0.1 didn't make a request
 ]]></system-err>
 </testsuite>

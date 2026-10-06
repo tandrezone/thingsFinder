@@ -3,14 +3,20 @@ package app.thingsfinder.ui.common
 import android.content.Context
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import app.thingsfinder.AppContainer
 import app.thingsfinder.ThingsFinderApp
+import app.thingsfinder.sync.ServerUrl
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 /** Every data screen renders exactly one of these. */
 sealed interface UiState<out T> {
@@ -30,6 +36,19 @@ fun errorMsg(@StringRes res: Int, vararg args: Any) = UiMessage(res, args.toList
 
 @Composable
 fun UiMessage.text(): String = resolve(LocalContext.current)
+
+/**
+ * The cloud server's base URL — the default one until the person signs in
+ * elsewhere. QR codes link to its web pages (/view, /add, /remove), which
+ * any camera can open and which offer to open the app.
+ */
+@Composable
+fun rememberServerUrl(): String {
+    val app = LocalContext.current.applicationContext as? ThingsFinderApp
+    val urls = remember(app) { app?.container?.cloudSession?.state?.map { it.serverUrl } ?: flowOf(ServerUrl.DEFAULT) }
+    val url by urls.collectAsStateWithLifecycle(initialValue = null)
+    return url ?: ServerUrl.DEFAULT
+}
 
 /** ViewModel factory that hands the [AppContainer] to [create]. */
 inline fun <reified VM : ViewModel> containerFactory(crossinline create: (AppContainer) -> VM): ViewModelProvider.Factory =

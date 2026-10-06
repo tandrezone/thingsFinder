@@ -73,12 +73,16 @@ the device.
 
 ## QR codes and labels
 
-| Code | Encodes | What scanning it does |
-|---|---|---|
-| Box **view** code | `https://<server>/view/<token>` (web) · `thingsfinder://box/<token>` (app) | Web: public read-only list of the box's contents, no login needed. App: opens the box. |
-| Box / place **add item** code | `https://<server>/add/<token>` · `thingsfinder://box|place/<token>/add` | Opens the box or place with the add-item form already open and focused |
-| Box / place **remove item** code | `https://<server>/remove/<token>` · `thingsfinder://box|place/<token>/remove` | Opens the box or place in remove mode: each item gets **−1** (take one out; the last one removes the item) and **Remove** |
-| Group **invite** code | `https://<server>/join/<token>` · `thingsfinder://join/<token>` | Offers to join the group |
+Every code, whether made on the web or on the phone, encodes a web page on
+the server, so any phone camera can open it. On a phone, that page shows an
+**Open this in the app** note linking to the matching `thingsfinder://` link.
+
+| Code | Encodes | Opens in the app as | What scanning it does |
+|---|---|---|---|
+| Box **view** code | `https://<server>/view/<token>` | `thingsfinder://box/<token>` | Web: public read-only list of the box's contents, no login needed. App: opens the box. |
+| Box / place **add item** code | `https://<server>/add/<token>` | `thingsfinder://box|place/<token>/add` | Opens the box or place with the add-item form already open and focused |
+| Box / place **remove item** code | `https://<server>/remove/<token>` | `thingsfinder://box|place/<token>/remove` | Opens the box or place in remove mode: each item gets **−1** (take one out; the last one removes the item) and **Remove** |
+| Group **invite** code | `https://<server>/join/<token>` | `thingsfinder://join/<token>` | Offers to join the group |
 
 - The add and remove codes need a login with access to the group, and the
   group becomes the active one. People outside the group get "not found".
@@ -87,8 +91,11 @@ the device.
   mm, and set PNG resolution with `?dpi=`.
 - Android: share any code as a PNG, or share a printable label (50×30 mm at
   300 dpi).
+- Android codes use the server set in Settings → Cloud (the default server
+  when none is set).
 - The Android in-app scanner understands both the web URLs and the
-  `thingsfinder://` links.
+  `thingsfinder://` links, and the app opens the default server's links
+  directly when Android lets it.
 
 ## Adding items faster
 

@@ -45,8 +45,10 @@ import kotlinx.coroutines.withContext
 
 /**
  * "Add item" and "Remove item" QR codes for a box or a place. Each encodes
- * thingsfinder://box|place/{token}/add|remove, so scanning it opens the
- * container with the add-item sheet up, or in remove mode. Each can be
+ * the server's https://host/add|remove/{token} page (see BoxLinks), so the
+ * in-app scanner opens the container with the add-item sheet up, or in
+ * remove mode, and a phone camera opens the web page, which offers to open
+ * the app. Each can be
  * shared as a bare QR or as a printable label.
  */
 @Composable

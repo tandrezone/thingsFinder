@@ -53,10 +53,12 @@ import app.thingsfinder.data.db.ItemEntity
 import app.thingsfinder.data.db.PlaceEntity
 import app.thingsfinder.domain.BoxLinks
 import app.thingsfinder.domain.LinkAction
+import app.thingsfinder.sync.ServerUrl
 import app.thingsfinder.ui.common.ReviewState
 import app.thingsfinder.ui.common.ScreenEvent
 import app.thingsfinder.ui.common.UiState
 import app.thingsfinder.ui.common.containerFactory
+import app.thingsfinder.ui.common.rememberServerUrl
 import app.thingsfinder.ui.common.text
 import app.thingsfinder.ui.components.ActionQrCard
 import app.thingsfinder.ui.components.ApplyInitialAction
@@ -98,6 +100,7 @@ fun PlaceDetailScreen(
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val itemsUi = rememberItemsUiState()
+    val serverUrl = rememberServerUrl()
     ApplyInitialAction(initialAction, itemsUi)
 
     LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it.resolve(context)) } }
@@ -114,6 +117,7 @@ fun PlaceDetailScreen(
         ocrRunning = ocrRunning,
         itemsUi = itemsUi,
         snackbar = snackbar,
+        serverUrl = serverUrl,
         onBack = onBack,
         onOpenBox = onOpenBox,
         onAddItem = { itemsUi.addOpen = true },
@@ -200,6 +204,7 @@ fun PlaceDetailContent(
     ocrRunning: Boolean,
     itemsUi: ItemsUiState,
     snackbar: SnackbarHostState,
+    serverUrl: String = ServerUrl.DEFAULT,
     onBack: () -> Unit,
     onOpenBox: (Long) -> Unit,
     onAddItem: () -> Unit,
@@ -273,8 +278,8 @@ fun PlaceDetailContent(
                             ActionQrCard(
                                 name = place.name,
                                 isPlace = true,
-                                addLink = BoxLinks.placeLink(place.shareToken, LinkAction.Add),
-                                removeLink = BoxLinks.placeLink(place.shareToken, LinkAction.Remove),
+                                addLink = BoxLinks.webActionLink(serverUrl, place.shareToken, LinkAction.Add),
+                                removeLink = BoxLinks.webActionLink(serverUrl, place.shareToken, LinkAction.Remove),
                             )
                         }
                     }

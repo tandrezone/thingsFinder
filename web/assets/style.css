@@ -214,6 +214,12 @@ h2::after {
 .flash-error { background: var(--error-bg); color: var(--error-text); border-left-color: var(--error-text); }
 .flash-info { background: var(--info-bg); color: var(--info-text); border-left-color: var(--info-text); }
 
+/* "Open this in the app" on pages reached from a QR code — only where the app could be installed. */
+.app-note a { color: inherit; }
+@media (hover: hover) and (pointer: fine) {
+  .app-note { display: none; }
+}
+
 /* ----------------------------------------------------------------- empty */
 
 .empty-state {

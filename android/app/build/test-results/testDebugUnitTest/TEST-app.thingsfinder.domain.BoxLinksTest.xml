@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="app.thingsfinder.domain.BoxLinksTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-02T12:25:00.109Z" hostname="TIAGOANDRE-JAVR" time="0.009">
+<testsuite name="app.thingsfinder.domain.BoxLinksTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-06T11:00:27.883Z" hostname="TIAGOANDRE-JAVR" time="0.011">
   <properties/>
-  <testcase name="web add and remove links may be a box or a place" classname="app.thingsfinder.domain.BoxLinksTest" time="0.003"/>
+  <testcase name="QR codes link to the server's web pages, and parse back" classname="app.thingsfinder.domain.BoxLinksTest" time="0.004"/>
+  <testcase name="web add and remove links may be a box or a place" classname="app.thingsfinder.domain.BoxLinksTest" time="0.0"/>
   <testcase name="rejects anything else" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
   <testcase name="understands app links and web-app view links" classname="app.thingsfinder.domain.BoxLinksTest" time="0.0"/>
   <testcase name="new tokens are 32 hex chars and differ" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
   <testcase name="route segments map back to actions" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
   <testcase name="invite keys accept any case, with or without the dash" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
   <testcase name="app links for boxes and places, with add and remove" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
-  <testcase name="malformed links are rejected" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
-  <testcase name="group invites, app and web" classname="app.thingsfinder.domain.BoxLinksTest" time="0.0"/>
+  <testcase name="malformed links are rejected" classname="app.thingsfinder.domain.BoxLinksTest" time="0.0"/>
+  <testcase name="group invites, app and web" classname="app.thingsfinder.domain.BoxLinksTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>
